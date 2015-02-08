@@ -94,6 +94,11 @@ func (a *App) Run() {
 }
 
 func (a *App) check() {
+	if a.r != nil && !a.r.IsLeader() {
+		// is not leader, not check
+		return
+	}
+
 	masters := a.masters.GetMasters()
 
 	var wg sync.WaitGroup
