@@ -14,6 +14,7 @@ var (
 	ErrNodeDown    = errors.New("Node is down")
 	ErrNodeAlive   = errors.New("Node may be still alive")
 	ErrNoCandidate = errors.New("no proper candidate to be promoted to master")
+	ErrNodeType    = errors.New("Node is not the expected type")
 )
 
 const (
@@ -137,6 +138,7 @@ func (g *Group) Check() error {
 	serverType, _ := redis.String(v[0], nil)
 	if serverType != MasterType {
 		log.Errorf("server %s is not master now", g.Master.Addr)
+		return ErrNodeType
 	}
 
 	// second is master replication offset, skip
