@@ -10,11 +10,18 @@ const (
 	ClusterStateExisting = "existing"
 )
 
+const (
+	MastersStateNew      = "new"
+	MastersStateExisting = "existing"
+)
+
 type Config struct {
 	Addr         string   `toml:"addr"`
-	ServerID     int      `toml:"server_id"`
+	RaftAddr     string   `toml:"raft_id"`
 	Cluster      []string `toml:"cluster"`
 	ClusterState string   `toml:"cluster_state"`
+	Masters      []string `toml:"masters"`
+	MastersState string   `toml:"masters_state"`
 	DataDir      string   `toml:"data_dir"`
 	LogDir       string   `toml:"log_dir"`
 }

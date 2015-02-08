@@ -5,16 +5,22 @@ addr = "127.0.0.1:11000"
 data_dir = "./var"
 
 # Log path, if empty, stdout will be used
-log_dir = 
+log_dir = ""
 
-# Server ID, must be unique in cluster
-server_id = 1
+# Raft listen address
+raft_addr = "127.0.0.1:12000"
 
-# cluster, format is ID:host:port, host:port is for raft communication.
-cluster = ["1:127.0.0.1:12000"]
+# Raft cluster, if we have multi raft servers, write it here. It can contain above raft_addr
+cluster = ["127.0.0.1:12000"]
 
-# Cluster state, new or existing
+# Raft cluster state, new or existing
 # after service starts, we will save the current cluster in a config file.
 # if new, we will use above cluster config as the new raft cluster.
 # if existing, we will use before saved cluster config + above cluster as the raft cluster.
 cluster_state = "existing"
+
+# Monitored masters
+masters = ["127.0.0.1:6379"]
+
+# Monitored masters state, new or exising, the state explanation is the same as above cluser_state
+masters_state = "existing"

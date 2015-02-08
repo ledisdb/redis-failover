@@ -1,6 +1,7 @@
 package failover
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/hashicorp/raft"
 	"github.com/hashicorp/raft-boltdb"
@@ -9,34 +10,144 @@ import (
 	"net"
 	"os"
 	"path"
-	"strconv"
-	"strings"
+	"sync"
 	"time"
 )
 
-type FSM struct {
+const (
+	addCmd = "add"
+	delCmd = "del"
+	setCmd = "set"
+)
+
+type action struct {
+	Cmd     string   `json:"cmd"`
+	Masters []string `json:"masters"`
 }
 
-func (fsm *FSM) Apply(log *raft.Log) interface{} {
+// save mornitored master addr
+type masterFSM struct {
+	sync.Mutex
+
+	masters map[string]struct{}
+}
+
+func newMasterFSM() *masterFSM {
+	fsm := new(masterFSM)
+	fsm.masters = make(map[string]struct{})
+	return fsm
+}
+
+func (fsm *masterFSM) AddMasters(addrs []string) {
+	fsm.Lock()
+	defer fsm.Unlock()
+
+	for _, addr := range addrs {
+		fsm.masters[addr] = struct{}{}
+
+	}
+
+}
+
+func (fsm *masterFSM) DelMasters(addrs []string) {
+	fsm.Lock()
+	defer fsm.Unlock()
+
+	for _, addr := range addrs {
+		delete(fsm.masters, addr)
+	}
+}
+
+func (fsm *masterFSM) SetMasters(addrs []string) {
+	m := make(map[string]struct{}, len(addrs))
+
+	for _, addr := range addrs {
+		m[addr] = struct{}{}
+	}
+
+	fsm.Lock()
+	defer fsm.Unlock()
+
+	fsm.masters = m
+}
+
+func (fsm *masterFSM) GetMasters() []string {
+	fsm.Lock()
+	defer fsm.Unlock()
+
+	m := make([]string, len(fsm.masters))
+	for master, _ := range fsm.masters {
+		m = append(m, master)
+	}
+	return m
+}
+
+func (fsm *masterFSM) Apply(l *raft.Log) interface{} {
+	var a action
+	if err := json.Unmarshal(l.Data, &a); err != nil {
+		log.Errorf("decode raft log err %v", err)
+		return err
+	}
+
+	switch a.Cmd {
+	case addCmd:
+		fsm.AddMasters(a.Masters)
+	case delCmd:
+		fsm.DelMasters(a.Masters)
+	case setCmd:
+		fsm.SetMasters(a.Masters)
+	default:
+		log.Errorf("invalid fsm action %v", a.Cmd)
+	}
+
 	return nil
 }
 
-func (fsm *FSM) Snapshot() (raft.FSMSnapshot, error) {
-	return nil, nil
+func (fsm *masterFSM) Snapshot() (raft.FSMSnapshot, error) {
+	snap := new(masterSnapshot)
+	snap.masters = make([]string, 0, len(fsm.masters))
+
+	fsm.Lock()
+	for master, _ := range fsm.masters {
+		snap.masters = append(snap.masters, master)
+	}
+	fsm.Unlock()
+	return snap, nil
 }
 
-func (fsm *FSM) Restore(inp io.ReadCloser) error {
+func (fsm *masterFSM) Restore(snap io.ReadCloser) error {
+	defer snap.Close()
+
+	d := json.NewDecoder(snap)
+	var masters []string
+
+	if err := d.Decode(&masters); err != nil {
+		return err
+	}
+
+	fsm.Lock()
+	for _, master := range masters {
+		fsm.masters[master] = struct{}{}
+	}
+	fsm.Unlock()
+
 	return nil
 }
 
-type Snapshot struct {
+type masterSnapshot struct {
+	masters []string
 }
 
-func (snap *Snapshot) Persist(sink raft.SnapshotSink) error {
-	return nil
+func (snap *masterSnapshot) Persist(sink raft.SnapshotSink) error {
+	data, _ := json.Marshal(snap.masters)
+	_, err := sink.Write(data)
+	if err != nil {
+		sink.Cancel()
+	}
+	return err
 }
 
-func (snap *Snapshot) Release() {
+func (snap *masterSnapshot) Release() {
 
 }
 
@@ -44,53 +155,45 @@ func (snap *Snapshot) Release() {
 type Raft struct {
 	r *raft.Raft
 
-	log     *os.File
-	dbStore *raftboltdb.BoltStore
-	trans   *raft.NetworkTransport
+	log       *os.File
+	dbStore   *raftboltdb.BoltStore
+	trans     *raft.NetworkTransport
+	peerStore *raft.JSONPeers
+
+	raftAddr string
 }
 
 func newRaft(c *Config, fsm raft.FSM) (*Raft, error) {
-	if len(c.Cluster) == 0 {
+	r := new(Raft)
+
+	if len(c.RaftAddr) == 0 {
 		log.Info("no cluster in config, don't use raft")
 		return nil, nil
 	}
 
-	var raftListen string
 	peers := make([]net.Addr, 0, len(c.Cluster))
+
+	r.raftAddr = c.RaftAddr
+
+	a, err := net.ResolveTCPAddr("tcp", c.RaftAddr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid raft addr format %s, must host:port, err:%v", c.RaftAddr, err)
+	}
+
+	peers = raft.AddUniquePeer(peers, a)
+
 	for _, cluster := range c.Cluster {
-		seps := strings.SplitN(cluster, ":", 1)
-		if len(seps) != 2 {
-			return nil, fmt.Errorf("invalid cluster format %s, must ID:host:port", cluster)
-		}
-
-		id, err := strconv.Atoi(seps[0])
+		a, err = net.ResolveTCPAddr("tcp", cluster)
 		if err != nil {
-			return nil, fmt.Errorf("invalid cluster format %s, must ID:host:port", cluster)
-		} else if id == c.ServerID {
-			if len(raftListen) > 0 {
-				return nil, fmt.Errorf("duplicate cluster config for ID %d", id)
-			}
-			raftListen = seps[1]
+			return nil, fmt.Errorf("invalid cluster format %s, must host:port, err:%v", cluster, err)
 		}
 
-		a, err := net.ResolveTCPAddr("tcp", seps[1])
-		if err != nil {
-			return nil, fmt.Errorf("invalid cluster format %s, must ID:host:port, err:%v", cluster, err)
-		}
-
-		peers = append(peers, a)
+		peers = raft.AddUniquePeer(peers, a)
 	}
 
-	if len(raftListen) == 0 {
-		return nil, fmt.Errorf("must have a cluster config for current server id %d", c.ServerID)
-	}
-
-	r := new(Raft)
 	raftPath := path.Join(c.DataDir, "raft")
 
 	os.MkdirAll(raftPath, 0755)
-
-	var err error
 
 	cfg := raft.DefaultConfig()
 
@@ -118,35 +221,35 @@ func newRaft(c *Config, fsm raft.FSM) (*Raft, error) {
 		return nil, err
 	}
 
-	r.trans, err = raft.NewTCPTransport(raftListen, nil, 3, 5*time.Second, r.log)
+	r.trans, err = raft.NewTCPTransport(r.raftAddr, nil, 3, 5*time.Second, r.log)
 	if err != nil {
 		return nil, err
 	}
 
-	peerStore := raft.NewJSONPeers(raftPath, r.trans)
+	r.peerStore = raft.NewJSONPeers(raftPath, r.trans)
 
 	if c.ClusterState == ClusterStateNew {
 		log.Infof("cluster state is new, use new cluster config")
-		peerStore.SetPeers(peers)
+		r.peerStore.SetPeers(peers)
 	} else {
 		log.Infof("cluster state is existing, use previous + new cluster config")
-		ps, err := peerStore.Peers()
+		ps, err := r.peerStore.Peers()
 		if err != nil {
 			log.Errorf("get store peers error %v", err)
 			return nil, err
 		}
 
 		for _, peer := range peers {
-			peerStore.SetPeers(raft.AddUniquePeer(ps, peer))
+			r.peerStore.SetPeers(raft.AddUniquePeer(ps, peer))
 		}
 	}
 
-	if peers, _ := peerStore.Peers(); len(peers) <= 1 {
+	if peers, _ := r.peerStore.Peers(); len(peers) <= 1 {
 		cfg.EnableSingleNode = true
 		log.Warn("raft will run in single node mode")
 	}
 
-	r.r, err = raft.NewRaft(cfg, fsm, r.dbStore, r.dbStore, fileStore, peerStore, r.trans)
+	r.r, err = raft.NewRaft(cfg, fsm, r.dbStore, r.dbStore, fileStore, r.peerStore, r.trans)
 
 	return r, err
 }
@@ -170,4 +273,105 @@ func (r *Raft) Close() {
 	if r.log != os.Stdout {
 		r.log.Close()
 	}
+}
+
+func (r *Raft) AddMasters(addrs []string, timeout time.Duration) error {
+	var a = action{
+		Cmd:     addCmd,
+		Masters: addrs,
+	}
+
+	return r.apply(&a, timeout)
+}
+
+func (r *Raft) DelMasters(addrs []string, timeout time.Duration) error {
+	var a = action{
+		Cmd:     delCmd,
+		Masters: addrs,
+	}
+
+	return r.apply(&a, timeout)
+}
+
+func (r *Raft) SetMasters(addrs []string, timeout time.Duration) error {
+	var a = action{
+		Cmd:     setCmd,
+		Masters: addrs,
+	}
+
+	return r.apply(&a, timeout)
+}
+
+func (r *Raft) AddPeer(addr string) error {
+	peer, err := net.ResolveTCPAddr("tcp", addr)
+	if err != nil {
+		return err
+	}
+
+	f := r.r.AddPeer(peer)
+	return f.Error()
+}
+
+func (r *Raft) DelPeer(addr string) error {
+	peer, err := net.ResolveTCPAddr("tcp", addr)
+	if err != nil {
+		return err
+	}
+
+	f := r.r.RemovePeer(peer)
+	return f.Error()
+
+}
+
+func (r *Raft) SetPeers(addrs []string) error {
+	peers := make([]net.Addr, 0, len(addrs))
+
+	for _, addr := range addrs {
+		peer, err := net.ResolveTCPAddr("tcp", addr)
+		if err != nil {
+			return err
+		}
+		peers = append(peers, peer)
+	}
+
+	f := r.r.SetPeers(peers)
+	return f.Error()
+
+}
+
+func (r *Raft) GetPeers() ([]string, error) {
+	peers, err := r.peerStore.Peers()
+	if err != nil {
+		return nil, err
+	}
+
+	addrs := make([]string, 0, len(peers))
+
+	for _, peer := range peers {
+		addrs = append(addrs, peer.String())
+	}
+
+	return addrs, nil
+}
+
+func (r *Raft) apply(a *action, timeout time.Duration) error {
+	data, err := json.Marshal(a)
+	if err != nil {
+		return err
+	}
+
+	f := r.r.Apply(data, timeout)
+	return f.Error()
+}
+
+func (r *Raft) LeaderCh() <-chan bool {
+	return r.r.LeaderCh()
+}
+
+func (r *Raft) IsLeader() bool {
+	return r.r.Leader().String() == r.raftAddr
+}
+
+func (r *Raft) Leader() string {
+	return r.r.Leader().String()
 }

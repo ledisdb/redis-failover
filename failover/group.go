@@ -29,8 +29,6 @@ const (
 	SyncState       = "sync"
 )
 
-type FailoverHandler func(oldMaster, newMaster string) error
-
 // A node represents a real redis server
 type Node struct {
 	// Redis address, only support tcp now
@@ -100,12 +98,9 @@ type Group struct {
 	Slaves map[string]Node `json:"slaves"`
 
 	m sync.Mutex
-
-	hMutex   sync.Mutex
-	handlers []FailoverHandler
 }
 
-func NewGroup(masterAddr string) *Group {
+func newGroup(masterAddr string) *Group {
 	g := new(Group)
 
 	g.Master = Node{Addr: masterAddr}
@@ -175,51 +170,36 @@ func (g *Group) Check() error {
 //  1, check master is still alive or not again
 //  2, elect a best slave which has the most up-to-date data with master
 //  3, promote the slave to master, then let other slaves replicate from it
-func (g *Group) Failover() error {
+func (g *Group) Failover() (newMaster string, err error) {
 	g.m.Lock()
 	defer g.m.Unlock()
 
 	// first, check master is down again
-	if err := g.Master.ping(); err == nil {
+	if err = g.Master.ping(); err == nil {
 		log.Infof("ping master %s OK, may not down, return", g.Master.Addr)
-		return nil
+		return
 	}
 
-	oldMaster := g.Master.Addr
-
-	addr, err := g.elect()
+	newMaster, err = g.elect()
 	if err != nil {
 		log.Errorf("elect slave error %v", err)
-		return err
+		return
 	}
 
-	if len(addr) == 0 {
+	if len(newMaster) == 0 {
 		log.Errorf("no proper slave to be promoted")
-		return ErrNoCandidate
+		err = ErrNoCandidate
+		return
 	}
 
-	log.Infof("elect %s as new master, promote it", addr)
+	log.Infof("elect %s as new master, promote it", newMaster)
 
-	if err = g.promote(addr); err != nil {
-		log.Errorf("promote %s to master error %v", addr, err)
-		return err
+	if err = g.promote(newMaster); err != nil {
+		log.Errorf("promote %s to master error %v", newMaster, err)
+		return
 	}
 
-	g.hMutex.Lock()
-	for _, h := range g.handlers {
-		if err := h(oldMaster, addr); err != nil {
-			log.Errorf("on failover handler error %v", err)
-		}
-	}
-	g.hMutex.Unlock()
-
-	return nil
-}
-
-func (g *Group) AddHandler(f FailoverHandler) {
-	g.hMutex.Lock()
-	g.handlers = append(g.handlers, f)
-	g.hMutex.Unlock()
+	return
 }
 
 func (g *Group) elect() (string, error) {
