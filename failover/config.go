@@ -5,10 +5,18 @@ import (
 	"io/ioutil"
 )
 
+const (
+	ClusterStateNew      = "new"
+	ClusterStateExisting = "existing"
+)
+
 type Config struct {
-	Addr    string   `toml:"addr"`
-	Cluster []string `toml:"cluster"`
-	DataDir string   `toml:"data_dir"`
+	Addr         string   `toml:"addr"`
+	ServerID     int      `toml:"server_id"`
+	Cluster      []string `toml:"cluster"`
+	ClusterState string   `toml:"cluster_state"`
+	DataDir      string   `toml:"data_dir"`
+	LogDir       string   `toml:"log_dir"`
 }
 
 func NewConfigWithFile(name string) (*Config, error) {
