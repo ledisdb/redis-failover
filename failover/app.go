@@ -126,6 +126,11 @@ func (a *App) checkMaster(wg *sync.WaitGroup, g *Group) {
 	// remove it from saved masters
 	a.delMasters([]string{oldMaster})
 
+	if err == ErrNodeType {
+		log.Errorf("server %s is not master now, we will skip it", oldMaster)
+		return
+	}
+
 	log.Errorf("check master %s err %v, do failover", oldMaster, err)
 
 	newMaster, err := g.Failover()
