@@ -75,11 +75,19 @@ func (fsm *masterFSM) GetMasters() []string {
 	fsm.Lock()
 	defer fsm.Unlock()
 
-	m := make([]string, len(fsm.masters))
+	m := make([]string, 0, len(fsm.masters))
 	for master, _ := range fsm.masters {
 		m = append(m, master)
 	}
 	return m
+}
+
+func (fsm *masterFSM) IsMaster(addr string) bool {
+	fsm.Lock()
+	defer fsm.Unlock()
+
+	_, ok := fsm.masters[addr]
+	return ok
 }
 
 func (fsm *masterFSM) Apply(l *raft.Log) interface{} {
@@ -166,23 +174,23 @@ type Raft struct {
 func newRaft(c *Config, fsm raft.FSM) (*Raft, error) {
 	r := new(Raft)
 
-	if len(c.RaftAddr) == 0 {
-		log.Info("no cluster in config, don't use raft")
+	if len(c.Raft.Addr) == 0 {
+		log.Info("no raft addr in config, don't use raft")
 		return nil, nil
 	}
 
-	peers := make([]net.Addr, 0, len(c.Cluster))
+	peers := make([]net.Addr, 0, len(c.Raft.Cluster))
 
-	r.raftAddr = c.RaftAddr
+	r.raftAddr = c.Raft.Addr
 
-	a, err := net.ResolveTCPAddr("tcp", c.RaftAddr)
+	a, err := net.ResolveTCPAddr("tcp", r.raftAddr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid raft addr format %s, must host:port, err:%v", c.RaftAddr, err)
+		return nil, fmt.Errorf("invalid raft addr format %s, must host:port, err:%v", r.raftAddr, err)
 	}
 
 	peers = raft.AddUniquePeer(peers, a)
 
-	for _, cluster := range c.Cluster {
+	for _, cluster := range c.Raft.Cluster {
 		a, err = net.ResolveTCPAddr("tcp", cluster)
 		if err != nil {
 			return nil, fmt.Errorf("invalid cluster format %s, must host:port, err:%v", cluster, err)
@@ -191,16 +199,14 @@ func newRaft(c *Config, fsm raft.FSM) (*Raft, error) {
 		peers = raft.AddUniquePeer(peers, a)
 	}
 
-	raftPath := path.Join(c.DataDir, "raft")
-
-	os.MkdirAll(raftPath, 0755)
+	os.MkdirAll(c.Raft.DataDir, 0755)
 
 	cfg := raft.DefaultConfig()
 
-	if len(c.LogDir) == 0 {
+	if len(c.Raft.LogDir) == 0 {
 		r.log = os.Stdout
 	} else {
-		logFile := path.Join(raftPath, "raft.log")
+		logFile := path.Join(c.Raft.LogDir, "raft.log")
 		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
 		if err != nil {
 			return nil, err
@@ -210,13 +216,13 @@ func newRaft(c *Config, fsm raft.FSM) (*Raft, error) {
 		cfg.LogOutput = r.log
 	}
 
-	raftDBPath := path.Join(raftPath, "db")
+	raftDBPath := path.Join(c.Raft.DataDir, "raft_db")
 	r.dbStore, err = raftboltdb.NewBoltStore(raftDBPath)
 	if err != nil {
 		return nil, err
 	}
 
-	fileStore, err := raft.NewFileSnapshotStore(raftPath, 1, r.log)
+	fileStore, err := raft.NewFileSnapshotStore(c.Raft.DataDir, 1, r.log)
 	if err != nil {
 		return nil, err
 	}
@@ -226,9 +232,9 @@ func newRaft(c *Config, fsm raft.FSM) (*Raft, error) {
 		return nil, err
 	}
 
-	r.peerStore = raft.NewJSONPeers(raftPath, r.trans)
+	r.peerStore = raft.NewJSONPeers(c.Raft.DataDir, r.trans)
 
-	if c.ClusterState == ClusterStateNew {
+	if c.Raft.ClusterState == ClusterStateNew {
 		log.Infof("cluster state is new, use new cluster config")
 		r.peerStore.SetPeers(peers)
 	} else {

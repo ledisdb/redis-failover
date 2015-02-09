@@ -15,15 +15,20 @@ const (
 	MastersStateExisting = "existing"
 )
 
-type Config struct {
+type RaftConfig struct {
 	Addr         string   `toml:"addr"`
-	RaftAddr     string   `toml:"raft_id"`
-	Cluster      []string `toml:"cluster"`
-	ClusterState string   `toml:"cluster_state"`
-	Masters      []string `toml:"masters"`
-	MastersState string   `toml:"masters_state"`
 	DataDir      string   `toml:"data_dir"`
 	LogDir       string   `toml:"log_dir"`
+	Cluster      []string `toml:"cluster"`
+	ClusterState string   `toml:"cluster_state"`
+}
+
+type Config struct {
+	Addr          string     `toml:"addr"`
+	Masters       []string   `toml:"masters"`
+	MastersState  string     `toml:"masters_state"`
+	CheckInterval int        `toml:"check_interval"`
+	Raft          RaftConfig `toml:"raft"`
 }
 
 func NewConfigWithFile(name string) (*Config, error) {

@@ -12,13 +12,13 @@ import (
 
 var configFile = flag.String("config", "", "failover config file")
 var addr = flag.String("addr", ":11000", "failover http listen addr")
-var dataDir = flag.String("data_dir", "./var", "data store path")
-var logDir = flag.String("log_dir", "./log", "log store path")
-var raftAddr = flag.String("raft_addr", "", "raft listen addr, if empty, we will disable raft")
-var cluster = flag.String("cluster", "", "raft cluster,vseperated by comma")
-var clusterState = flag.String("cluster_state", "", "new or existing, if new, we will deprecate old saved cluster and use new")
 var masters = flag.String("masters", "", "redis master need to be monitored, seperated by comma")
 var mastersState = flag.String("masters_state", "", "new or existing for raft, if new, we will depracted old saved masters")
+var raftDataDir = flag.String("raft_data_dir", "./var", "raft data store path")
+var raftLogDir = flag.String("raft_log_dir", "./log", "raft log store path")
+var raftAddr = flag.String("raft_addr", "", "raft listen addr, if empty, we will disable raft")
+var raftCluster = flag.String("raft_cluster", "", "raft cluster,vseperated by comma")
+var raftClusterState = flag.String("raft_cluster_state", "", "new or existing, if new, we will deprecate old saved cluster and use new")
 
 func main() {
 	flag.Parse()
@@ -35,28 +35,27 @@ func main() {
 		fmt.Printf("no config file, use default config")
 		c = new(failover.Config)
 		c.Addr = ":11000"
-		c.DataDir = "./var"
 	}
 
 	if len(*raftAddr) > 0 {
-		c.RaftAddr = *raftAddr
+		c.Raft.Addr = *raftAddr
 	}
 
-	if len(*dataDir) > 0 {
-		c.DataDir = *dataDir
+	if len(*raftDataDir) > 0 {
+		c.Raft.DataDir = *raftDataDir
 	}
 
-	if len(*logDir) > 0 {
-		c.LogDir = *logDir
+	if len(*raftLogDir) > 0 {
+		c.Raft.LogDir = *raftLogDir
 	}
 
-	seps := strings.Split(*cluster, ",")
+	seps := strings.Split(*raftCluster, ",")
 	if len(seps) > 0 {
-		c.Cluster = seps
+		c.Raft.Cluster = seps
 	}
 
-	if len(*clusterState) > 0 {
-		c.ClusterState = *clusterState
+	if len(*raftClusterState) > 0 {
+		c.Raft.ClusterState = *raftClusterState
 	}
 
 	seps = strings.Split(*masters, ",")

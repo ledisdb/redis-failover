@@ -6,6 +6,7 @@ import (
 	"github.com/garyburd/redigo/redis"
 	"github.com/siddontang/go/log"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -34,11 +35,14 @@ type Node struct {
 	// Redis address, only support tcp now
 	Addr string
 
+	// Replication offset
+	Offset int64
+
 	conn redis.Conn
 }
 
-func (n Node) String() string {
-	return n.Addr
+func (n *Node) String() string {
+	return fmt.Sprintf("{addr: %s offset: %d}", n.Addr, n.Offset)
 }
 
 func (n *Node) doCommand(cmd string, args ...interface{}) (interface{}, error) {
@@ -48,7 +52,7 @@ func (n *Node) doCommand(cmd string, args ...interface{}) (interface{}, error) {
 		if n.conn == nil {
 			n.conn, err = redis.DialTimeout("tcp", n.Addr, 5*time.Second, 0, 0)
 			if err != nil {
-				log.Errorf("dial %s error: %v, try again", n.Addr, err)
+				log.Errorf("dial %s error: %v, ry again", n.Addr, err)
 				continue
 			}
 
@@ -83,7 +87,7 @@ func (n *Node) slaveof(host string, port string) error {
 	return err
 }
 
-func (n *Node) Close() {
+func (n *Node) close() {
 	if n.conn != nil {
 		n.conn.Close()
 		n.conn = nil
@@ -94,8 +98,8 @@ func (n *Node) Close() {
 // It will use role command per second to check master's alive
 // and find slaves automatically.
 type Group struct {
-	Master Node            `json:"master"`
-	Slaves map[string]Node `json:"slaves"`
+	Master *Node
+	Slaves map[string]*Node
 
 	m sync.Mutex
 }
@@ -103,8 +107,8 @@ type Group struct {
 func newGroup(masterAddr string) *Group {
 	g := new(Group)
 
-	g.Master = Node{Addr: masterAddr}
-	g.Slaves = make(map[string]Node)
+	g.Master = &Node{Addr: masterAddr}
+	g.Slaves = make(map[string]*Node)
 
 	return g
 }
@@ -113,10 +117,10 @@ func (g *Group) Close() {
 	g.m.Lock()
 	defer g.m.Unlock()
 
-	g.Master.Close()
+	g.Master.close()
 
 	for _, slave := range g.Slaves {
-		slave.Close()
+		slave.close()
 	}
 }
 
@@ -124,6 +128,10 @@ func (g *Group) Check() error {
 	g.m.Lock()
 	defer g.m.Unlock()
 
+	return g.doRole()
+}
+
+func (g *Group) doRole() error {
 	v, err := g.Master.doRole()
 	if err != nil {
 		return ErrNodeDown
@@ -136,16 +144,18 @@ func (g *Group) Check() error {
 		return ErrNodeType
 	}
 
-	// second is master replication offset, skip
+	// second is master replication offset,
+	g.Master.Offset, _ = redis.Int64(v[1], nil)
 
 	// then slave list [host, port, offset]
 	slaves, _ := redis.Values(v[2], nil)
-	nodes := make(map[string]Node, len(slaves))
+	nodes := make(map[string]*Node, len(slaves))
 	for i := 0; i < len(slaves); i++ {
 		ss, _ := redis.Strings(slaves[i], nil)
 		var n Node
 		n.Addr = fmt.Sprintf("%s:%s", ss[0], ss[1])
-		nodes[n.Addr] = n
+		n.Offset, _ = strconv.ParseInt(fmt.Sprintf("%s", ss[2]), 10, 64)
+		nodes[n.Addr] = &n
 	}
 
 	// we don't care slave add or remove too much, so only log
@@ -158,7 +168,7 @@ func (g *Group) Check() error {
 	for addr, slave := range g.Slaves {
 		if _, ok := nodes[addr]; !ok {
 			log.Infof("slave %s removed", addr)
-			slave.Close()
+			slave.close()
 		}
 	}
 
@@ -166,43 +176,18 @@ func (g *Group) Check() error {
 	return nil
 }
 
-// failover does the following thing
-//  1, check master is still alive or not again
-//  2, elect a best slave which has the most up-to-date data with master
-//  3, promote the slave to master, then let other slaves replicate from it
-func (g *Group) Failover() (newMaster string, err error) {
+func (g *Group) Ping() error {
 	g.m.Lock()
 	defer g.m.Unlock()
 
-	// first, check master is down again
-	if err = g.Master.ping(); err == nil {
-		log.Infof("ping master %s OK, may not down, return", g.Master.Addr)
-		return
-	}
-
-	newMaster, err = g.elect()
-	if err != nil {
-		log.Errorf("elect slave error %v", err)
-		return
-	}
-
-	if len(newMaster) == 0 {
-		log.Errorf("no proper slave to be promoted")
-		err = ErrNoCandidate
-		return
-	}
-
-	log.Infof("elect %s as new master, promote it", newMaster)
-
-	if err = g.promote(newMaster); err != nil {
-		log.Errorf("promote %s to master error %v", newMaster, err)
-		return
-	}
-
-	return
+	return g.Master.ping()
 }
 
-func (g *Group) elect() (string, error) {
+// Elect a best slave which has the most up-to-date data with master
+func (g *Group) Elect() (string, error) {
+	g.m.Lock()
+	defer g.m.Unlock()
+
 	var addr string
 	var maxOffset int64 = 0
 
@@ -217,30 +202,41 @@ func (g *Group) elect() (string, error) {
 		// the first line is server type
 		serverType, _ := redis.String(v[0], nil)
 		if serverType != SlaveType {
-			log.Errorf("server %s is not slave now", slave.Addr)
+			log.Errorf("server %s is not slave now, skip it", slave.Addr)
+			continue
 		}
 
 		// the second and third is host and port, skip it
 		// the fouth is replication state
 		state, _ := redis.String(v[3], nil)
-		if state == ConnectState || state == SyncState {
-			log.Errorf("slave %s replication state is %s, master %s:%v may be not down???",
+		if state == ConnectedState || state == SyncState {
+			log.Infof("slave %s replication state is %s, master %s:%v may be not down???",
 				slave.Addr, state, v[1], v[2])
 			return "", ErrNodeAlive
 		}
 
-		// the end is the replication offset
-		offset, _ := redis.Int64(v[4], nil)
-		if offset > maxOffset {
+		// the end is the replication offset, but it is still -1 if master is down
+
+		// we can only use last master role command information to determind the best slave
+		if maxOffset < slave.Offset {
+			maxOffset = slave.Offset
 			addr = slave.Addr
-			maxOffset = offset
 		}
+	}
+
+	if len(addr) == 0 {
+		log.Errorf("no proper candidate to be promoted")
+		return "", ErrNoCandidate
 	}
 
 	return addr, nil
 }
 
-func (g *Group) promote(addr string) error {
+// Promote the slave to master, then let other slaves replicate from it
+func (g *Group) Promote(addr string) error {
+	g.m.Lock()
+	defer g.m.Unlock()
+
 	node := g.Slaves[addr]
 
 	if err := node.slaveof("no", "one"); err != nil {

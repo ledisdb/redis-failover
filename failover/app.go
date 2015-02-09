@@ -9,7 +9,8 @@ import (
 	"time"
 )
 
-type FailoverHandler func(oldMaster, newMaster string) error
+type BeforeFailoverHandler func(downMaster string) error
+type AfterFailoverHandler func(downMaster, newMaster string) error
 
 type App struct {
 	c *Config
@@ -20,25 +21,28 @@ type App struct {
 
 	masters *masterFSM
 
+	gMutex sync.Mutex
 	groups map[string]*Group
 
 	quit chan struct{}
 	wg   sync.WaitGroup
 
-	hMutex   sync.Mutex
-	handlers []FailoverHandler
+	hMutex         sync.Mutex
+	beforeHandlers []BeforeFailoverHandler
+	afterHandlers  []AfterFailoverHandler
 }
 
 func NewApp(c *Config) (*App, error) {
 	var err error
 
 	a := new(App)
+	a.c = c
 	a.quit = make(chan struct{})
 	a.groups = make(map[string]*Group)
 
 	a.masters = newMasterFSM()
 
-	if len(c.Addr) == 0 {
+	if len(c.Addr) > 0 {
 		a.l, err = net.Listen("tcp", c.Addr)
 		if err != nil {
 			return nil, err
@@ -60,6 +64,13 @@ func NewApp(c *Config) (*App, error) {
 }
 
 func (a *App) Close() {
+	select {
+	case <-a.quit:
+		return
+	default:
+		break
+	}
+
 	if a.l != nil {
 		a.l.Close()
 	}
@@ -76,8 +87,12 @@ func (a *App) Close() {
 func (a *App) Run() {
 	go a.startHTTP()
 
+	if a.c.CheckInterval <= 0 {
+		a.c.CheckInterval = 1000
+	}
+
 	a.wg.Add(1)
-	t := time.NewTicker(1 * time.Second)
+	t := time.NewTicker(time.Duration(a.c.CheckInterval) * time.Millisecond)
 	defer func() {
 		t.Stop()
 		a.wg.Done()
@@ -103,15 +118,26 @@ func (a *App) check() {
 
 	var wg sync.WaitGroup
 	for _, master := range masters {
+		a.gMutex.Lock()
 		g, ok := a.groups[master]
 		if !ok {
 			g = newGroup(master)
 			a.groups[master] = g
 		}
+		a.gMutex.Unlock()
 
 		wg.Add(1)
 		go a.checkMaster(&wg, g)
 	}
+
+	a.gMutex.Lock()
+	for master, g := range a.groups {
+		if !a.masters.IsMaster(master) {
+			delete(a.groups, master)
+			g.Close()
+		}
+	}
+	a.gMutex.Unlock()
 }
 
 func (a *App) checkMaster(wg *sync.WaitGroup, g *Group) {
@@ -123,31 +149,45 @@ func (a *App) checkMaster(wg *sync.WaitGroup, g *Group) {
 
 	oldMaster := g.Master.Addr
 
-	// remove it from saved masters
-	a.delMasters([]string{oldMaster})
-
 	if err == ErrNodeType {
 		log.Errorf("server %s is not master now, we will skip it", oldMaster)
+		// remove it from saved masters
+		a.delMasters([]string{oldMaster})
 		return
 	}
 
 	log.Errorf("check master %s err %v, do failover", oldMaster, err)
 
-	newMaster, err := g.Failover()
+	a.onBeforeFailover(oldMaster)
+
+	// first elect a candidate
+	newMaster, err := g.Elect()
 	if err != nil {
-		log.Errorf("do master %s failover err: %v", oldMaster, err)
+		// elect error
 		return
 	}
 
-	a.hMutex.Lock()
-	for _, h := range a.handlers {
-		err = h(oldMaster, newMaster)
-		log.Errorf("do failover handler err: %v", err)
+	log.Errorf("master is down, elect %s as new master, do failover", newMaster)
+
+	// remove it from saved masters
+	a.delMasters([]string{oldMaster})
+
+	// promote the candiate to master
+	err = g.Promote(newMaster)
+
+	if err != nil {
+		log.Fatalf("do master %s failover err: %v", oldMaster, err)
+		return
 	}
-	a.hMutex.Unlock()
+
+	a.onAfterFailover(oldMaster, newMaster)
 }
 
 func (a *App) startHTTP() {
+	if a.l == nil {
+		return
+	}
+
 	m := mux.NewRouter()
 
 	m.Handle("/master", &masterHandler{a})
@@ -185,8 +225,35 @@ func (a *App) setMasters(addrs []string) {
 
 }
 
-func (a *App) AddHandler(f FailoverHandler) {
+func (a *App) AddBeforeFailoverHandler(f BeforeFailoverHandler) {
 	a.hMutex.Lock()
-	a.handlers = append(a.handlers, f)
+	a.beforeHandlers = append(a.beforeHandlers, f)
+	a.hMutex.Unlock()
+}
+
+func (a *App) AddAfterFailoverHandler(f AfterFailoverHandler) {
+	a.hMutex.Lock()
+	a.afterHandlers = append(a.afterHandlers, f)
+	a.hMutex.Unlock()
+}
+
+func (a *App) onBeforeFailover(downMaster string) {
+	a.hMutex.Lock()
+	for _, h := range a.beforeHandlers {
+		if err := h(downMaster); err != nil {
+			log.Errorf("do before failover handler for %s err: %v", downMaster, err)
+		}
+	}
+	a.hMutex.Unlock()
+}
+
+func (a *App) onAfterFailover(downMaster string, newMaster string) {
+	a.hMutex.Lock()
+	for _, h := range a.afterHandlers {
+		if err := h(downMaster, newMaster); err != nil {
+			log.Errorf("do after failover handler for %s -> %s err: %v", downMaster, newMaster, err)
+		}
+	}
+
 	a.hMutex.Unlock()
 }
