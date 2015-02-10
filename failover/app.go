@@ -184,6 +184,8 @@ func (a *App) checkMaster(wg *sync.WaitGroup, g *Group) {
 		return
 	}
 
+	a.addMasters([]string{newMaster})
+
 	a.onAfterFailover(oldMaster, newMaster)
 }
 
