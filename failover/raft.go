@@ -206,6 +206,7 @@ func newRaft(c *Config, fsm raft.FSM) (*Raft, error) {
 	if len(c.Raft.LogDir) == 0 {
 		r.log = os.Stdout
 	} else {
+		os.MkdirAll(c.Raft.LogDir, 0755)
 		logFile := path.Join(c.Raft.LogDir, "raft.log")
 		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
 		if err != nil {
@@ -246,13 +247,15 @@ func newRaft(c *Config, fsm raft.FSM) (*Raft, error) {
 		}
 
 		for _, peer := range peers {
-			r.peerStore.SetPeers(raft.AddUniquePeer(ps, peer))
+			ps = raft.AddUniquePeer(ps, peer)
 		}
+
+		r.peerStore.SetPeers(ps)
 	}
 
 	if peers, _ := r.peerStore.Peers(); len(peers) <= 1 {
 		cfg.EnableSingleNode = true
-		log.Warn("raft will run in single node mode")
+		log.Warn("raft will run in single node mode, may only be used in test")
 	}
 
 	r.r, err = raft.NewRaft(cfg, fsm, r.dbStore, r.dbStore, fileStore, r.peerStore, r.trans)
@@ -375,9 +378,19 @@ func (r *Raft) LeaderCh() <-chan bool {
 }
 
 func (r *Raft) IsLeader() bool {
-	return r.r.Leader().String() == r.raftAddr
+	addr := r.r.Leader()
+	if addr == nil {
+		return false
+	} else {
+		return addr.String() == r.raftAddr
+	}
 }
 
 func (r *Raft) Leader() string {
 	return r.r.Leader().String()
+}
+
+func (r *Raft) Barrier(timeout time.Duration) error {
+	f := r.r.Barrier(timeout)
+	return f.Error()
 }

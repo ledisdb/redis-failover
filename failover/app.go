@@ -142,6 +142,9 @@ func (a *App) check() {
 
 func (a *App) checkMaster(wg *sync.WaitGroup, g *Group) {
 	defer wg.Done()
+
+	// later, add check strategy, like check failed n numbers in n seconds and do failover, etc.
+	// now only check once.
 	err := g.Check()
 	if err == nil {
 		return
@@ -149,10 +152,14 @@ func (a *App) checkMaster(wg *sync.WaitGroup, g *Group) {
 
 	oldMaster := g.Master.Addr
 
+	// If check error, we will remove it from saved masters and not check.
+	// I just want to avoid some errors if below failover failed, at that time,
+	// handling it manually seems a better way.
+	// If you want to recheck it, please add it again.
+	a.delMasters([]string{oldMaster})
+
 	if err == ErrNodeType {
 		log.Errorf("server %s is not master now, we will skip it", oldMaster)
-		// remove it from saved masters
-		a.delMasters([]string{oldMaster})
 		return
 	}
 
@@ -168,9 +175,6 @@ func (a *App) checkMaster(wg *sync.WaitGroup, g *Group) {
 	}
 
 	log.Errorf("master is down, elect %s as new master, do failover", newMaster)
-
-	// remove it from saved masters
-	a.delMasters([]string{oldMaster})
 
 	// promote the candiate to master
 	err = g.Promote(newMaster)
@@ -200,27 +204,30 @@ func (a *App) startHTTP() {
 	s.Serve(a.l)
 }
 
-func (a *App) addMasters(addrs []string) {
+func (a *App) addMasters(addrs []string) error {
 	if a.r != nil {
-		a.r.AddMasters(addrs, 0)
+		return a.r.AddMasters(addrs, 0)
 	} else {
 		a.masters.AddMasters(addrs)
+		return nil
 	}
 }
 
-func (a *App) delMasters(addrs []string) {
+func (a *App) delMasters(addrs []string) error {
 	if a.r != nil {
-		a.r.DelMasters(addrs, 0)
+		return a.r.DelMasters(addrs, 0)
 	} else {
 		a.masters.DelMasters(addrs)
+		return nil
 	}
 }
 
-func (a *App) setMasters(addrs []string) {
+func (a *App) setMasters(addrs []string) error {
 	if a.r != nil {
-		a.r.SetMasters(addrs, 0)
+		return a.r.SetMasters(addrs, 0)
 	} else {
 		a.masters.SetMasters(addrs)
+		return nil
 	}
 
 }
