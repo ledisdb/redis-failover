@@ -68,8 +68,8 @@ redis-failover will log some messages for failover, like:
 
 ```
 [2015/02/10 14:10:18] group.go:64 [Error] do ROLE command for 127.0.0.1:6379 error: EOF, try again
-[2015/02/10 14:10:18] group.go:56 [Error] dial 127.0.0.1:6379 error: dial tcp 10.20.151.148:6379: connection refused, try again
-[2015/02/10 14:10:18] group.go:56 [Error] dial 127.0.0.1:6379 error: dial tcp 10.20.151.148:6379: connection refused, try again
+[2015/02/10 14:10:18] group.go:56 [Error] dial 127.0.0.1:6379 error: dial tcp 127.0.0.1:6379: connection refused, try again
+[2015/02/10 14:10:18] group.go:56 [Error] dial 127.0.0.1:6379 error: dial tcp 127.0.0.1:6379: connection refused, try again
 [2015/02/10 14:10:18] app.go:166 [Error] check master 127.0.0.1:6379 err Node is down, do failover
 [2015/02/10 14:10:18] group.go:259 [Info] select slave 127.0.0.1:6380 as new master, priority:100, repl_offset:29
 ```
@@ -79,7 +79,7 @@ If the failover failed, redis-failover will stop to check this redis to avoid fu
 ## Todo
 
 + Add check strategy, like if check failed N numbers in N seconds, we will do failover, etc...
-+ Add zookeeper or etcd, now redis-failover uses raft to select the leader and do monitoring and failover, but it's easy to support zookeeper or etcd.
++ Support zookeeper or etcd, now redis-failover uses raft to select the leader and do monitoring and failover, but it's easy to support zookeeper or etcd.
 + Integrate redis-failover into [xcodis](https://github.om/siddontang/xcodis) or even [codis](http://github.com/wandoulabs/codis).
 
 ## Feedback
