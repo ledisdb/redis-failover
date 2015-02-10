@@ -7,6 +7,7 @@ import (
 	"github.com/siddontang/go/log"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -85,6 +86,26 @@ func (n *Node) ping() error {
 func (n *Node) slaveof(host string, port string) error {
 	_, err := n.doCommand("SLAVEOF", host, port)
 	return err
+}
+
+func (n *Node) doRelpInfo() (map[string]string, error) {
+	v, err := redis.String(n.doCommand("INFO", "REPLICATION"))
+	if err != nil {
+		return nil, err
+	}
+
+	seps := strings.Split(v, "\r\n")
+	// skip first line, is # Replication
+	seps = seps[1:]
+
+	m := make(map[string]string, len(seps))
+	for _, s := range seps {
+		kv := strings.SplitN(s, ":", 2)
+		if len(kv) == 2 {
+			m[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
+		}
+	}
+	return m, nil
 }
 
 func (n *Node) close() {
@@ -189,38 +210,44 @@ func (g *Group) Elect() (string, error) {
 	defer g.m.Unlock()
 
 	var addr string
-	var maxOffset int64 = 0
+	var checkOffset int64 = 0
+	var checkPriority int = 0
 
 	for _, slave := range g.Slaves {
-		v, err := slave.doRole()
+		m, err := slave.doRelpInfo()
 		if err != nil {
-			//skip this slave
-			log.Infof("slave %s do role command err %v, skip it", slave.Addr, err)
+			log.Infof("slave %s get replication info err %v, skip it", slave.Addr, err)
 			continue
 		}
 
-		// the first line is server type
-		serverType, _ := redis.String(v[0], nil)
-		if serverType != SlaveType {
+		if m["slave"] == MasterType {
 			log.Errorf("server %s is not slave now, skip it", slave.Addr)
 			continue
 		}
 
-		// the second and third is host and port, skip it
-		// the fouth is replication state
-		state, _ := redis.String(v[3], nil)
-		if state == ConnectedState || state == SyncState {
-			log.Infof("slave %s replication state is %s, master %s:%v may be not down???",
-				slave.Addr, state, v[1], v[2])
+		if m["master_link_status"] == "up" {
+			log.Infof("slave %s master_link_status is up, master %s:%s may be not down???",
+				slave.Addr, m["master_host"], m["master_port"])
 			return "", ErrNodeAlive
 		}
 
-		// the end is the replication offset, but it is still -1 if master is down
+		priority, _ := strconv.Atoi(m["slave_priority"])
+		replOffset, _ := strconv.ParseInt(m["slave_repl_offset"], 10, 64)
 
-		// we can only use last master role command information to determind the best slave
-		if maxOffset < slave.Offset {
-			maxOffset = slave.Offset
+		used := false
+		// like redis-sentinel, first check priority, then salve repl offset
+		if checkPriority < priority {
+			used = true
+		} else if checkPriority == priority {
+			if checkOffset < replOffset {
+				used = true
+			}
+		}
+
+		if used {
 			addr = slave.Addr
+			checkPriority = priority
+			checkOffset = replOffset
 		}
 	}
 
@@ -228,6 +255,8 @@ func (g *Group) Elect() (string, error) {
 		log.Errorf("no proper candidate to be promoted")
 		return "", ErrNoCandidate
 	}
+
+	log.Infof("select slave %s as new master, priority:%d, repl_offset:%d", addr, checkPriority, checkOffset)
 
 	return addr, nil
 }
