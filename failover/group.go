@@ -53,7 +53,7 @@ func (n *Node) doCommand(cmd string, args ...interface{}) (interface{}, error) {
 		if n.conn == nil {
 			n.conn, err = redis.DialTimeout("tcp", n.Addr, 5*time.Second, 0, 0)
 			if err != nil {
-				log.Errorf("dial %s error: %v, ry again", n.Addr, err)
+				log.Errorf("dial %s error: %v, try again", n.Addr, err)
 				continue
 			}
 
