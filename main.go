@@ -12,10 +12,11 @@ import (
 
 var configFile = flag.String("config", "", "failover config file")
 var addr = flag.String("addr", ":11000", "failover http listen addr")
+var checkInterval = flag.Int("check_interval", 1000, "check master alive every n millisecond")
 var masters = flag.String("masters", "", "redis master need to be monitored, seperated by comma")
 var mastersState = flag.String("masters_state", "", "new or existing for raft, if new, we will depracted old saved masters")
-var raftDataDir = flag.String("raft_data_dir", "./var", "raft data store path")
-var raftLogDir = flag.String("raft_log_dir", "./log", "raft log store path")
+var raftDataDir = flag.String("raft_data_dir", "./var/store", "raft data store path")
+var raftLogDir = flag.String("raft_log_dir", "./var/log", "raft log store path")
 var raftAddr = flag.String("raft_addr", "", "raft listen addr, if empty, we will disable raft")
 var raftCluster = flag.String("raft_cluster", "", "raft cluster,vseperated by comma")
 var raftClusterState = flag.String("raft_cluster_state", "", "new or existing, if new, we will deprecate old saved cluster and use new")
@@ -35,6 +36,10 @@ func main() {
 		fmt.Printf("no config file, use default config")
 		c = new(failover.Config)
 		c.Addr = ":11000"
+	}
+
+	if *checkInterval > 0 {
+		c.CheckInterval = *checkInterval
 	}
 
 	if len(*raftAddr) > 0 {
