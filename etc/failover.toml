@@ -8,6 +8,7 @@ masters = ["127.0.0.1:6379"]
 # after service starts, we will save the current monitored masters in somewhere.
 # if new, we will use discard old saved masters and use new in the config.
 # if existing, we will use before saved masters + new in the config.
+# we will only save masters in some place in raft mode. 
 masters_state = "existing"
 
 # Check master alive every n millisecond, default is 1000 millisecond
