@@ -14,6 +14,10 @@ masters_state = "existing"
 # Check master alive every n millisecond, default is 1000 millisecond
 check_interval = 1000
 
+# If every check in max_down_time seconds is failed, we may think the master is down, then do failover.
+# the totoal check num = max_down_time / check_interval
+max_down_time = 3
+
 [raft]
 # Raft listen address, if empty, we will not use raft cluster
 addr = "127.0.0.1:12000"

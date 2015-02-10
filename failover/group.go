@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/garyburd/redigo/redis"
 	"github.com/siddontang/go/log"
+	"github.com/siddontang/go/sync2"
 	"net"
 	"strconv"
 	"strings"
@@ -122,6 +123,8 @@ type Group struct {
 	Master *Node
 	Slaves map[string]*Node
 
+	CheckErrNum sync2.AtomicInt32
+
 	m sync.Mutex
 }
 
@@ -149,7 +152,14 @@ func (g *Group) Check() error {
 	g.m.Lock()
 	defer g.m.Unlock()
 
-	return g.doRole()
+	err := g.doRole()
+	if err != nil {
+		g.CheckErrNum.Add(1)
+	} else {
+		g.CheckErrNum.Set(0)
+	}
+
+	return err
 }
 
 func (g *Group) doRole() error {

@@ -28,6 +28,7 @@ type Config struct {
 	Masters       []string   `toml:"masters"`
 	MastersState  string     `toml:"masters_state"`
 	CheckInterval int        `toml:"check_interval"`
+	MaxDownTime   int        `toml:"max_down_time"`
 	Raft          RaftConfig `toml:"raft"`
 }
 

@@ -78,7 +78,6 @@ If the failover failed, redis-failover will stop to check this redis to avoid fu
 
 ## Todo
 
-+ Add check strategy, like if check failed N numbers in N seconds, we will do failover, etc...
 + Support zookeeper or etcd, now redis-failover uses raft to select the leader and do monitoring and failover, but it's easy to support zookeeper or etcd.
 + Integrate redis-failover into [xcodis](https://github.om/siddontang/xcodis) or even [codis](http://github.com/wandoulabs/codis).
 

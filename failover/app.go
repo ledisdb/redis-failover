@@ -42,6 +42,14 @@ func NewApp(c *Config) (*App, error) {
 
 	a.masters = newMasterFSM()
 
+	if c.MaxDownTime <= 0 {
+		c.MaxDownTime = 3
+	}
+
+	if a.c.CheckInterval <= 0 {
+		a.c.CheckInterval = 1000
+	}
+
 	if len(c.Addr) > 0 {
 		a.l, err = net.Listen("tcp", c.Addr)
 		if err != nil {
@@ -87,10 +95,6 @@ func (a *App) Close() {
 func (a *App) Run() {
 	go a.startHTTP()
 
-	if a.c.CheckInterval <= 0 {
-		a.c.CheckInterval = 1000
-	}
-
 	a.wg.Add(1)
 	t := time.NewTicker(time.Duration(a.c.CheckInterval) * time.Millisecond)
 	defer func() {
@@ -130,6 +134,9 @@ func (a *App) check() {
 		go a.checkMaster(&wg, g)
 	}
 
+	// wait all check done
+	wg.Wait()
+
 	a.gMutex.Lock()
 	for master, g := range a.groups {
 		if !a.masters.IsMaster(master) {
@@ -152,16 +159,26 @@ func (a *App) checkMaster(wg *sync.WaitGroup, g *Group) {
 
 	oldMaster := g.Master.Addr
 
+	if err == ErrNodeType {
+		log.Errorf("server %s is not master now, we will skip it", oldMaster)
+
+		// server is not master, we will not check it.
+		a.delMasters([]string{oldMaster})
+		return
+	}
+
+	errNum := time.Duration(g.CheckErrNum.Get())
+	downTime := errNum * time.Duration(a.c.CheckInterval) * time.Millisecond
+	if downTime < time.Duration(a.c.MaxDownTime)*time.Second {
+		log.Warnf("check master %s err %v, down time: %0.2fs, retry check", oldMaster, err, downTime.Seconds())
+		return
+	}
+
 	// If check error, we will remove it from saved masters and not check.
 	// I just want to avoid some errors if below failover failed, at that time,
 	// handling it manually seems a better way.
 	// If you want to recheck it, please add it again.
 	a.delMasters([]string{oldMaster})
-
-	if err == ErrNodeType {
-		log.Errorf("server %s is not master now, we will skip it", oldMaster)
-		return
-	}
 
 	log.Errorf("check master %s err %v, do failover", oldMaster, err)
 

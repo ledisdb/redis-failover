@@ -112,6 +112,7 @@ func (s *failoverTestSuite) TestSimpleCheck(c *C) {
 	port := testPort[0]
 	cfg.Masters = []string{fmt.Sprintf("127.0.0.1:%d", port)}
 	cfg.CheckInterval = 500
+	cfg.MaxDownTime = 1
 
 	app, err := NewApp(cfg)
 	c.Assert(err, IsNil)
@@ -150,6 +151,7 @@ func (s *failoverTestSuite) TestFailoverCheck(c *C) {
 
 	cfg.Masters = []string{masterAddr}
 	cfg.CheckInterval = 500
+	cfg.MaxDownTime = 1
 
 	app, err := NewApp(cfg)
 	c.Assert(err, IsNil)
@@ -332,15 +334,17 @@ func (s *failoverTestSuite) newClusterApp(c *C, num int, base int) []*App {
 	}
 	apps := make([]*App, 0, num)
 
-	os.RemoveAll("./var")
-
 	for i := 0; i < num; i++ {
 		cfg := new(Config)
 		cfg.Addr = fmt.Sprintf(":%d", port+i)
+		cfg.MaxDownTime = 1
 
 		cfg.Raft.Addr = fmt.Sprintf("127.0.0.1:%d", raftPort+i+base)
 		cfg.Raft.DataDir = fmt.Sprintf("./var/store/%d", i+base)
 		cfg.Raft.LogDir = fmt.Sprintf("./var/log/%d", i+base)
+
+		os.RemoveAll(cfg.Raft.DataDir)
+		os.RemoveAll(cfg.Raft.LogDir)
 
 		cfg.Raft.ClusterState = ClusterStateExisting
 		cfg.Raft.Cluster = cluster

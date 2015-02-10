@@ -13,6 +13,7 @@ import (
 var configFile = flag.String("config", "", "failover config file")
 var addr = flag.String("addr", ":11000", "failover http listen addr")
 var checkInterval = flag.Int("check_interval", 1000, "check master alive every n millisecond")
+var maxDownTime = flag.Int("max_down_time", 3, "max down time for a master, after that, we will do failover")
 var masters = flag.String("masters", "", "redis master need to be monitored, seperated by comma")
 var mastersState = flag.String("masters_state", "", "new or existing for raft, if new, we will depracted old saved masters")
 var raftDataDir = flag.String("raft_data_dir", "./var/store", "raft data store path")
@@ -40,6 +41,10 @@ func main() {
 
 	if *checkInterval > 0 {
 		c.CheckInterval = *checkInterval
+	}
+
+	if *maxDownTime > 0 {
+		c.MaxDownTime = *maxDownTime
 	}
 
 	if len(*raftAddr) > 0 {
