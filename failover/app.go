@@ -195,7 +195,6 @@ func (a *App) startHTTP() {
 	m := mux.NewRouter()
 
 	m.Handle("/master", &masterHandler{a})
-	m.Handle("/cluster", &clusterHandler{a})
 
 	s := http.Server{
 		Handler: m,

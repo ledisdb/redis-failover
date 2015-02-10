@@ -175,7 +175,6 @@ func newRaft(c *Config, fsm raft.FSM) (*Raft, error) {
 	r := new(Raft)
 
 	if len(c.Raft.Addr) == 0 {
-		log.Info("no raft addr in config, don't use raft")
 		return nil, nil
 	}
 
