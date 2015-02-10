@@ -43,8 +43,10 @@ func (fsm *masterFSM) AddMasters(addrs []string) {
 	defer fsm.Unlock()
 
 	for _, addr := range addrs {
+		if len(addr) == 0 {
+			continue
+		}
 		fsm.masters[addr] = struct{}{}
-
 	}
 
 }
@@ -54,6 +56,10 @@ func (fsm *masterFSM) DelMasters(addrs []string) {
 	defer fsm.Unlock()
 
 	for _, addr := range addrs {
+		if len(addr) == 0 {
+			continue
+		}
+
 		delete(fsm.masters, addr)
 	}
 }
@@ -62,6 +68,10 @@ func (fsm *masterFSM) SetMasters(addrs []string) {
 	m := make(map[string]struct{}, len(addrs))
 
 	for _, addr := range addrs {
+		if len(addr) == 0 {
+			continue
+		}
+
 		m[addr] = struct{}{}
 	}
 
@@ -79,6 +89,7 @@ func (fsm *masterFSM) GetMasters() []string {
 	for master, _ := range fsm.masters {
 		m = append(m, master)
 	}
+
 	return m
 }
 
