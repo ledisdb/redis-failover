@@ -226,8 +226,8 @@ func (g *Group) Elect() (string, error) {
 		}
 
 		if m["master_link_status"] == "up" {
-			log.Infof("slave %s master_link_status is up, master %s:%s may be not down???",
-				slave.Addr, m["master_host"], m["master_port"])
+			log.Infof("slave %s master_link_status is up, master %s may be not down???",
+				slave.Addr, g.Master.Addr)
 			return "", ErrNodeAlive
 		}
 
