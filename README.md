@@ -76,6 +76,10 @@ redis-failover will log some messages for failover, like:
 
 If the failover failed, redis-failover will stop to check this redis to avoid future unexpected errors, so at that time, you may fix it manually by yourself. 
 
+## Limitation
+
++ Redis version >= 2.8.12, redis-failover will use redis `ROLE` command to fetch the replication topology from master.
+
 ## Todo
 
 + Support zookeeper or etcd, now redis-failover uses raft to select the leader and do monitoring and failover, but it's easy to support zookeeper or etcd.
