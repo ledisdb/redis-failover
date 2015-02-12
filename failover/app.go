@@ -1,12 +1,18 @@
 package failover
 
 import (
+	"errors"
 	"github.com/gorilla/mux"
 	"github.com/siddontang/go/log"
 	"net"
 	"net/http"
 	"sync"
 	"time"
+)
+
+var (
+	// If failover handler return this error, we will give up future handling.
+	ErrGiveupFailover = errors.New("Give up failover handling")
 )
 
 type BeforeFailoverHandler func(downMaster string) error
@@ -182,7 +188,10 @@ func (a *App) checkMaster(wg *sync.WaitGroup, g *Group) {
 
 	log.Errorf("check master %s err %v, do failover", oldMaster, err)
 
-	a.onBeforeFailover(oldMaster)
+	if err := a.onBeforeFailover(oldMaster); err != nil {
+		//give up failover
+		return
+	}
 
 	// first elect a candidate
 	newMaster, err := g.Elect()
@@ -262,23 +271,34 @@ func (a *App) AddAfterFailoverHandler(f AfterFailoverHandler) {
 	a.hMutex.Unlock()
 }
 
-func (a *App) onBeforeFailover(downMaster string) {
+func (a *App) onBeforeFailover(downMaster string) error {
 	a.hMutex.Lock()
+	defer a.hMutex.Unlock()
+
 	for _, h := range a.beforeHandlers {
 		if err := h(downMaster); err != nil {
 			log.Errorf("do before failover handler for %s err: %v", downMaster, err)
+			if err == ErrGiveupFailover {
+				return ErrGiveupFailover
+			}
 		}
 	}
-	a.hMutex.Unlock()
+
+	return nil
 }
 
-func (a *App) onAfterFailover(downMaster string, newMaster string) {
+func (a *App) onAfterFailover(downMaster string, newMaster string) error {
 	a.hMutex.Lock()
+	defer a.hMutex.Unlock()
+
 	for _, h := range a.afterHandlers {
 		if err := h(downMaster, newMaster); err != nil {
 			log.Errorf("do after failover handler for %s -> %s err: %v", downMaster, newMaster, err)
+			if err == ErrGiveupFailover {
+				return ErrGiveupFailover
+			}
 		}
 	}
 
-	a.hMutex.Unlock()
+	return nil
 }
