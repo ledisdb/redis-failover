@@ -74,7 +74,10 @@ func newZk(cfg *Config, fsm *masterFSM) (Cluster, error) {
 		return nil, err
 	}
 
-	z.elector = zkhelper.CreateElection(z.conn, cfg.Zk.BaseDir)
+	pid := os.Getpid()
+	contents := fmt.Sprintf(`{"addr": "%v", "pid": %v}`, cfg.Addr, pid)
+
+	z.elector = zkhelper.CreateElectionWithContents(z.conn, cfg.Zk.BaseDir, contents)
 
 	z.checkLeader()
 
@@ -220,11 +223,11 @@ func (z *Zk) watchLeader() {
 			continue
 		}
 
-		// tricky, leader content is json, like {"hostname": "host", "pid": 111}
+		// tricky, leader content is json, like {"addr": "addr", "pid": 111}
 
 		var v struct {
-			Hostname string `json:"hostname"`
-			Pid      int    `json:"pid"`
+			Addr string `json:"addr"`
+			Pid  int    `json:"pid"`
 		}
 
 		if err = json.Unmarshal(data, &v); err != nil {
@@ -232,13 +235,16 @@ func (z *Zk) watchLeader() {
 			continue
 		}
 
-		hostname, _ := os.Hostname()
-		pid := os.Getpid()
-
-		if hostname == v.Hostname && v.Pid == pid {
-			z.noticeLeaderCh(true)
+		if v.Addr == "" {
+			// no leader data, wait
 		} else {
-			z.noticeLeaderCh(false)
+			pid := os.Getpid()
+
+			if z.c.Addr == v.Addr && v.Pid == pid {
+				z.noticeLeaderCh(true)
+			} else {
+				z.noticeLeaderCh(false)
+			}
 		}
 
 		select {
