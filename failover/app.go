@@ -23,7 +23,7 @@ type App struct {
 
 	l net.Listener
 
-	r *Raft
+	cluster Cluster
 
 	masters *masterFSM
 
@@ -63,9 +63,29 @@ func NewApp(c *Config) (*App, error) {
 		}
 	}
 
-	a.r, err = newRaft(c, a.masters)
+	switch c.Broker {
+	case "raft":
+		a.cluster, err = newRaft(c, a.masters)
+	case "zk":
+		a.cluster, err = newZk(c, a.masters)
+	default:
+		log.Infof("unsupported broker %s, use no cluster", c.Broker)
+		a.cluster = nil
+	}
+
 	if err != nil {
 		return nil, err
+	}
+
+	if a.cluster != nil {
+		// wait sometimes to check whether become leader or not
+		select {
+		case <-a.cluster.LeaderCh():
+		case <-time.After(5 * time.Second):
+			log.Warnf("wait 5s and can not know whether become leader or not")
+		}
+
+		log.Infof("%s is leader, %v", a.c.Addr, a.cluster.IsLeader())
 	}
 
 	if c.MastersState == MastersStateNew {
@@ -89,8 +109,8 @@ func (a *App) Close() {
 		a.l.Close()
 	}
 
-	if a.r != nil {
-		a.r.Close()
+	if a.cluster != nil {
+		a.cluster.Close()
 	}
 
 	close(a.quit)
@@ -119,7 +139,7 @@ func (a *App) Run() {
 }
 
 func (a *App) check() {
-	if a.r != nil && !a.r.IsLeader() {
+	if a.cluster != nil && !a.cluster.IsLeader() {
 		// is not leader, not check
 		return
 	}
@@ -232,31 +252,43 @@ func (a *App) startHTTP() {
 }
 
 func (a *App) addMasters(addrs []string) error {
-	if a.r != nil {
-		return a.r.AddMasters(addrs, 0)
+	if a.cluster != nil {
+		if a.cluster.IsLeader() {
+			return a.cluster.AddMasters(addrs, 10*time.Second)
+		} else {
+			log.Infof("%s is not leader, skip", a.c.Addr)
+		}
 	} else {
 		a.masters.AddMasters(addrs)
-		return nil
 	}
+	return nil
+
 }
 
 func (a *App) delMasters(addrs []string) error {
-	if a.r != nil {
-		return a.r.DelMasters(addrs, 0)
+	if a.cluster != nil {
+		if a.cluster.IsLeader() {
+			return a.cluster.DelMasters(addrs, 10*time.Second)
+		} else {
+			log.Infof("%s is not leader, skip", a.c.Addr)
+		}
 	} else {
 		a.masters.DelMasters(addrs)
-		return nil
 	}
+	return nil
 }
 
 func (a *App) setMasters(addrs []string) error {
-	if a.r != nil {
-		return a.r.SetMasters(addrs, 0)
+	if a.cluster != nil {
+		if a.cluster.IsLeader() {
+			return a.cluster.SetMasters(addrs, 10*time.Second)
+		} else {
+			log.Infof("%s is not leader, skip", a.c.Addr)
+		}
 	} else {
 		a.masters.SetMasters(addrs)
-		return nil
 	}
-
+	return nil
 }
 
 func (a *App) AddBeforeFailoverHandler(f BeforeFailoverHandler) {
