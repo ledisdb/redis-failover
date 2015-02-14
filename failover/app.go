@@ -77,23 +77,6 @@ func NewApp(c *Config) (*App, error) {
 		return nil, err
 	}
 
-	if a.cluster != nil {
-		// wait sometimes to check whether become leader or not
-		select {
-		case <-a.cluster.LeaderCh():
-		case <-time.After(5 * time.Second):
-			log.Warnf("wait 5s and can not know whether become leader or not")
-		}
-
-		log.Infof("%s is leader, %v", a.c.Addr, a.cluster.IsLeader())
-	}
-
-	if c.MastersState == MastersStateNew {
-		a.setMasters(c.Masters)
-	} else {
-		a.addMasters(c.Masters)
-	}
-
 	return a, nil
 }
 
@@ -119,6 +102,20 @@ func (a *App) Close() {
 }
 
 func (a *App) Run() {
+	if a.cluster != nil {
+		// wait 5s to determind whether leader or not
+		select {
+		case <-a.cluster.LeaderCh():
+		case <-time.After(5 * time.Second):
+		}
+	}
+
+	if a.c.MastersState == MastersStateNew {
+		a.setMasters(a.c.Masters)
+	} else {
+		a.addMasters(a.c.Masters)
+	}
+
 	go a.startHTTP()
 
 	a.wg.Add(1)
@@ -252,6 +249,10 @@ func (a *App) startHTTP() {
 }
 
 func (a *App) addMasters(addrs []string) error {
+	if len(addrs) == 0 {
+		return nil
+	}
+
 	if a.cluster != nil {
 		if a.cluster.IsLeader() {
 			return a.cluster.AddMasters(addrs, 10*time.Second)
@@ -266,6 +267,10 @@ func (a *App) addMasters(addrs []string) error {
 }
 
 func (a *App) delMasters(addrs []string) error {
+	if len(addrs) == 0 {
+		return nil
+	}
+
 	if a.cluster != nil {
 		if a.cluster.IsLeader() {
 			return a.cluster.DelMasters(addrs, 10*time.Second)

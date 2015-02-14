@@ -3,7 +3,6 @@ package failover
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -26,7 +25,7 @@ type Zk struct {
 	conn zkhelper.Conn
 	fsm  *masterFSM
 
-	elector  zkhelper.ZElector
+	elector  zElector
 	isLeader sync2.AtomicBool
 
 	leaderCh chan bool
@@ -74,10 +73,11 @@ func newZk(cfg *Config, fsm *masterFSM) (Cluster, error) {
 		return nil, err
 	}
 
-	pid := os.Getpid()
-	contents := fmt.Sprintf(`{"addr": "%v", "pid": %v}`, cfg.Addr, pid)
+	onRetryLock := func() {
+		z.noticeLeaderCh(false)
+	}
 
-	z.elector = zkhelper.CreateElectionWithContents(z.conn, cfg.Zk.BaseDir, contents)
+	z.elector = createElection(z.conn, cfg.Zk.BaseDir, cfg.Addr, onRetryLock)
 
 	z.checkLeader()
 
@@ -191,68 +191,17 @@ func (z *Zk) isClosed() bool {
 }
 
 func (z *Zk) checkLeader() {
-	z.wg.Add(2)
-
 	task := new(electorTask)
 	task.z = z
 	task.interrupted.Set(false)
 	task.stop = make(chan struct{})
 
 	go func() {
-		defer z.wg.Done()
 		err := z.elector.RunTask(task)
 		if err != nil {
 			log.Errorf("run elector task err: %v", err)
-			return
 		}
 	}()
-
-	go z.watchLeader()
-}
-
-func (z *Zk) watchLeader() {
-	defer z.wg.Done()
-
-	// tricky, zkhelper use leader path
-	zkPath := fmt.Sprintf("%s/leader", z.c.Zk.BaseDir)
-
-	for {
-		data, _, watch, err := z.conn.GetW(zkPath)
-		if err != nil {
-			log.Errorf("watch leader error %v", err)
-			continue
-		}
-
-		// tricky, leader content is json, like {"addr": "addr", "pid": 111}
-
-		var v struct {
-			Addr string `json:"addr"`
-			Pid  int    `json:"pid"`
-		}
-
-		if err = json.Unmarshal(data, &v); err != nil {
-			log.Errorf("decode leader data error %v", err)
-			continue
-		}
-
-		if v.Addr == "" {
-			// no leader data, wait
-		} else {
-			pid := os.Getpid()
-
-			if z.c.Addr == v.Addr && v.Pid == pid {
-				z.noticeLeaderCh(true)
-			} else {
-				z.noticeLeaderCh(false)
-			}
-		}
-
-		select {
-		case <-watch:
-		case <-z.quit:
-			return
-		}
-	}
 }
 
 func (z *Zk) getMasters() error {
@@ -313,6 +262,11 @@ type electorTask struct {
 }
 
 func (t *electorTask) Run() error {
+	t.z.wg.Add(1)
+	defer t.z.wg.Done()
+
+	log.Infof("begin leader %s, run", t.z.c.Addr)
+
 	if err := t.z.getMasters(); err != nil {
 		t.interrupted.Set(true)
 
@@ -320,27 +274,28 @@ func (t *electorTask) Run() error {
 		return err
 	}
 
-	select {
-	case <-t.stop:
-		t.z.noticeLeaderCh(false)
+	t.z.noticeLeaderCh(true)
 
-		t.interrupted.Set(false)
+	for {
+		select {
+		case <-t.z.quit:
+			log.Info("zk close, interrupt elector running task")
 
-		log.Info("stop elector running task")
-		return nil
-	case <-t.z.quit:
-		t.z.noticeLeaderCh(false)
+			t.z.noticeLeaderCh(false)
 
-		t.interrupted.Set(true)
+			t.interrupted.Set(true)
+			return nil
+		case <-t.stop:
+			log.Info("stop elector running task")
+			return nil
+		case a := <-t.z.actionCh:
+			if a.timeout.Get() {
+				log.Warnf("wait action %s masters %v timeout, skip it", a.a.Cmd, a.a.Masters)
+			} else {
+				err := t.z.handleAction(a.a)
 
-		log.Info("zk close, interrupt elector running task")
-	case a := <-t.z.actionCh:
-		if a.timeout.Get() {
-			log.Warnf("wait action %s masters %v timeout, skip it", a.a.Cmd, a.a.Masters)
-		} else {
-			err := t.z.handleAction(a.a)
-
-			a.ch <- err
+				a.ch <- err
+			}
 		}
 	}
 
@@ -348,7 +303,9 @@ func (t *electorTask) Run() error {
 }
 
 func (t *electorTask) Stop() {
-	t.z.isLeader.Set(false)
+	t.z.noticeLeaderCh(false)
+
+	t.interrupted.Set(false)
 
 	select {
 	case t.stop <- struct{}{}:

@@ -109,8 +109,6 @@ func (s *failoverTestSuite) doCommand(c *C, port int, cmd string, cmdArgs ...int
 }
 
 func (s *failoverTestSuite) TestSimpleCheck(c *C) {
-	c.Skip("skip")
-
 	cfg := new(Config)
 	cfg.Addr = ":11000"
 
@@ -148,8 +146,6 @@ func (s *failoverTestSuite) TestSimpleCheck(c *C) {
 }
 
 func (s *failoverTestSuite) TestFailoverCheck(c *C) {
-	c.Skip("skip")
-
 	cfg := new(Config)
 	cfg.Addr = ":11000"
 
@@ -183,8 +179,6 @@ func (s *failoverTestSuite) TestFailoverCheck(c *C) {
 }
 
 func (s *failoverTestSuite) TestOneFaftFailoverCheck(c *C) {
-	c.Skip("skip")
-
 	s.testOneClusterFailoverCheck(c, "raft")
 }
 
@@ -198,7 +192,8 @@ func (s *failoverTestSuite) checkLeader(c *C, apps []*App) *App {
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	c.Fatal("elect to leader failed after 10s, too slow")
+	c.Assert(1, Equals, 0)
+
 	return nil
 }
 
@@ -231,8 +226,6 @@ func (s *failoverTestSuite) testOneClusterFailoverCheck(c *C, broker string) {
 }
 
 func (s *failoverTestSuite) TestMultiRaftFailoverCheck(c *C) {
-	c.Skip("skip")
-
 	s.testMultiClusterFailoverCheck(c, "raft")
 }
 
@@ -299,7 +292,6 @@ func (s *failoverTestSuite) testMultiClusterFailoverCheck(c *C, broker string) {
 }
 
 func (s *failoverTestSuite) TestOneZkFailoverCheck(c *C) {
-	c.Skip("skip")
 	s.testOneClusterFailoverCheck(c, "zk")
 }
 
@@ -361,7 +353,7 @@ func (s *failoverTestSuite) newClusterApp(c *C, num int, base int, broker string
 			cfg.Zk.Addr = strings.Split(*zkAddr, ",")
 		}
 
-		cfg.Zk.BaseDir = "/zk/redis_failover"
+		cfg.Zk.BaseDir = "/zk/redis/failover"
 
 		app, err := NewApp(cfg)
 

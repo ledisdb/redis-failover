@@ -34,27 +34,49 @@ You can add master dynamically from HTTP, using [httpie](https://github.com/jaku
 http POST :11000/master masters==127.0.0.1:6379
 ```
 
-### Use raft, but only single node
+### Use raft, with only single node
 
 ```
-redis-failover -addr=127.0.0.1:11000 -masters=127.0.0.1:6379 -raft_addr=127.0.0.1:12000 -raft_data_dir=./var0 -raft_cluster=127.0.0.1:12000
+redis-failover -addr=127.0.0.1:11000 -masters=127.0.0.1:6379 -raft_addr=127.0.0.1:12000 -raft_data_dir=./var0 -raft_cluster=127.0.0.1:12000 -broker=raft
 ```
 
 `raft_addr` is the raft listen address for inner raft communication. `raft_data_dir` is the store path for raft, `raft_cluster` is the raft cluster, here only one node. 
+
+`broker` is the cluster type, now "raft" or "zk".
 
 You must know that if you want to use raft to avoid redis-failover single point of failure, you should not use only one raft node in production.
 
 ### Use raft, with multi nodes
 
 ```
-redis-failover -addr=127.0.0.1:11000 -masters=127.0.0.1:6379 -raft_addr=127.0.0.1:12000 -raft_data_dir=./var0 -raft_cluster=127.0.0.1:12000,127.0.0.1:12001,127.0.0.1:12002
+redis-failover -addr=127.0.0.1:11000 -masters=127.0.0.1:6379 -raft_addr=127.0.0.1:12000 -raft_data_dir=./var0 -raft_cluster=127.0.0.1:12000,127.0.0.1:12001,127.0.0.1:12002 -broker=raft
 
-redis-failover -addr=127.0.0.1:11001 -masters=127.0.0.1:6379 -raft_addr=127.0.0.1:12001 -raft_data_dir=./var1 -raft_cluster=127.0.0.1:12000,127.0.0.1:12001,127.0.0.1:12002
+redis-failover -addr=127.0.0.1:11001 -masters=127.0.0.1:6379 -raft_addr=127.0.0.1:12001 -raft_data_dir=./var1 -raft_cluster=127.0.0.1:12000,127.0.0.1:12001,127.0.0.1:12002 -broker=raft
 
-redis-failover -addr=127.0.0.1:11002 -masters=127.0.0.1:6379 -raft_addr=127.0.0.1:12002 -raft_data_dir=./var2 -raft_cluster=127.0.0.1:12000,127.0.0.1:12001,127.0.0.1:12002
+redis-failover -addr=127.0.0.1:11002 -masters=127.0.0.1:6379 -raft_addr=127.0.0.1:12002 -raft_data_dir=./var2 -raft_cluster=127.0.0.1:12000,127.0.0.1:12001,127.0.0.1:12002 -broker=raft
 ```
 
 `raft_cluster` now contains three raft nodes, so if one node down, other two can still work correctly. 
+
+### Use zookeeper, with only single node
+
+```
+redis-failover -addr=127.0.0.1:11000 -masters=127.0.0.1:6379 -zk_addr=127.0.0.1:2181 -zk_path=/zk/redis/failover -broker=zk
+```
+
+`zk_addr` is the remote zookeeper address, multi zk is seperated by comma.
+
+`zk_path` is the zookeeper base directory you want to save your data, the prefix must be "/zk". 
+
+### Use zookeeper, with multi nodes
+
+```
+redis-failover -addr=127.0.0.1:11000 -masters=127.0.0.1:6379 -zk_addr=127.0.0.1:2181 -zk_path=/zk/redis/failover -broker=zk
+
+redis-failover -addr=127.0.0.1:11001 -masters=127.0.0.1:6379 -zk_addr=127.0.0.1:2181 -zk_path=/zk/redis/failover -broker=zk
+
+redis-failover -addr=127.0.0.1:11002 -masters=127.0.0.1:6379 -zk_addr=127.0.0.1:2181 -zk_path=/zk/redis/failover -broker=zk
+```
 
 ## Failover
 
@@ -79,11 +101,6 @@ If the failover failed, redis-failover will stop to check this redis to avoid fu
 ## Limitation
 
 + Redis version >= 2.8.12, redis-failover will use redis `ROLE` command to fetch the replication topology from master.
-
-## Todo
-
-+ Support zookeeper or etcd, now redis-failover uses raft to select the leader and do monitoring and failover, but it's easy to support zookeeper or etcd.
-+ Integrate redis-failover into [xcodis](https://github.om/siddontang/xcodis) or even [codis](http://github.com/wandoulabs/codis).
 
 ## Feedback
 

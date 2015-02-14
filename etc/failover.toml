@@ -45,4 +45,4 @@ cluster_state = "existing"
 addr = ["127.0.0.1:2181"]
 
 # Base directory in zk, prefix must be /zk
-base_dir = "/zk/redis-failover"
+base_dir = "/zk/redis/failover"
