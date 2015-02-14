@@ -7,7 +7,7 @@ Automatic redis monitoring and failover.
 redis-sentinel is very powerful, why not use it but build a new one?
 
 1. I want to support not only redis, but also [LedisDB](https://github.com/siddontang/ledisdb)'s monitoring and failover.
-2. I want to embed it into another service like [xcodis](https://github.om/siddontang/xcodis).
+2. I want to embed it into another service like [xcodis](https://github.com/siddontang/xcodis).
 3. I just want to learn how to build a distributed service using [raft](https://raftconsensus.github.io). :-)
 
 ## Install and usage
