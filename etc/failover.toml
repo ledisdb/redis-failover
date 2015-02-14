@@ -18,6 +18,9 @@ check_interval = 1000
 # the totoal check num = max_down_time / check_interval
 max_down_time = 3
 
+# zk, raft 
+broker = "raft"
+
 [raft]
 # Raft listen address, if empty, we will not use raft cluster
 addr = "127.0.0.1:12000"
@@ -36,3 +39,10 @@ cluster = ["127.0.0.1:12000"]
 # if new, we will use above cluster config as the new raft cluster.
 # if existing, we will use before saved cluster config + above cluster as the raft cluster.
 cluster_state = "existing"
+
+[zk]
+# Zookeeper addr
+addr = ["127.0.0.1:2181"]
+
+# Base directory in zk, prefix must be /zk
+base_dir = "/zk/redis/failover"
