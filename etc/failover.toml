@@ -1,6 +1,10 @@
 # Server HTTP listen address
 addr = "127.0.0.1:11000"
 
+# Server password
+# if not set or password value is empty, we will not use auth
+password = ""
+
 # Monitored masters
 masters = ["127.0.0.1:6379"]
 
