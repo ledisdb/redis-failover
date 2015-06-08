@@ -4,14 +4,15 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"github.com/garyburd/redigo/redis"
-	. "gopkg.in/check.v1"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/garyburd/redigo/redis"
+	. "gopkg.in/check.v1"
 )
 
 var zkAddr = flag.String("zk", "", "zookeeper address, seperated by comma")
@@ -27,6 +28,8 @@ var _ = Suite(&failoverTestSuite{})
 
 var testPort = []int{16379, 16380, 16381}
 
+var testPassword = "123456"
+
 func (s *failoverTestSuite) SetUpSuite(c *C) {
 	_, err := exec.LookPath("redis-server")
 	c.Assert(err, IsNil)
@@ -38,8 +41,8 @@ func (s *failoverTestSuite) TearDownSuite(c *C) {
 
 func (s *failoverTestSuite) SetUpTest(c *C) {
 	for _, port := range testPort {
-		s.stopRedis(c, port)
-		s.startRedis(c, port)
+		s.stopRedis(c, port, testPassword)
+		s.startRedis(c, port, testPassword)
 		s.doCommand(c, port, "SLAVEOF", "NO", "ONE")
 		s.doCommand(c, port, "FLUSHALL")
 	}
@@ -47,7 +50,7 @@ func (s *failoverTestSuite) SetUpTest(c *C) {
 
 func (s *failoverTestSuite) TearDownTest(c *C) {
 	for _, port := range testPort {
-		s.stopRedis(c, port)
+		s.stopRedis(c, port, testPassword)
 	}
 }
 
@@ -69,10 +72,17 @@ func (r *redisChecker) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
-func (s *failoverTestSuite) startRedis(c *C, port int) {
+func (s *failoverTestSuite) startRedis(c *C, port int, password string) {
 	checker := &redisChecker{ok: false}
+
 	// start redis and use memory only
-	cmd := exec.Command("redis-server", "--port", fmt.Sprintf("%d", port), "--save", "")
+	var cmd *exec.Cmd
+	if len(password) > 0 {
+		cmd = exec.Command("redis-server", "--port", fmt.Sprintf("%d", port), "--requirepass", password, "--save", "")
+	} else {
+		cmd = exec.Command("redis-server", "--port", fmt.Sprintf("%d", port), "--save", "")
+	}
+
 	cmd.Stdout = checker
 	cmd.Stderr = checker
 
@@ -94,92 +104,27 @@ func (s *failoverTestSuite) startRedis(c *C, port int) {
 	c.Fatal("redis-server can not start ok after 10s")
 }
 
-func (s *failoverTestSuite) stopRedis(c *C, port int) {
-	cmd := exec.Command("redis-cli", "-p", fmt.Sprintf("%d", port), "shutdown", "nosave")
+func (s *failoverTestSuite) stopRedis(c *C, port int, password string) {
+	var cmd *exec.Cmd
+
+	if len(password) > 0 {
+		cmd = exec.Command("redis-cli", "-p", fmt.Sprintf("%d", port), "-a", password, "shutdown", "nosave")
+	} else {
+		cmd = exec.Command("redis-cli", "-p", fmt.Sprintf("%d", port), "shutdown", "nosave")
+	}
+
 	cmd.Run()
 }
 
 func (s *failoverTestSuite) doCommand(c *C, port int, cmd string, cmdArgs ...interface{}) interface{} {
-	conn, err := redis.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	// set mock node
+	mockNode := &Node{Addr: fmt.Sprintf("127.0.0.1:%d", port), Password: testPassword}
+	defer mockNode.close()
+
+	v, err := mockNode.doCommand(cmd, cmdArgs...)
 	c.Assert(err, IsNil)
 
-	v, err := conn.Do(cmd, cmdArgs...)
-	c.Assert(err, IsNil)
 	return v
-}
-
-func (s *failoverTestSuite) TestSimpleCheck(c *C) {
-	cfg := new(Config)
-	cfg.Addr = ":11000"
-
-	port := testPort[0]
-	cfg.Masters = []string{fmt.Sprintf("127.0.0.1:%d", port)}
-	cfg.CheckInterval = 500
-	cfg.MaxDownTime = 1
-
-	app, err := NewApp(cfg)
-	c.Assert(err, IsNil)
-
-	defer app.Close()
-
-	go func() {
-		app.Run()
-	}()
-
-	s.doCommand(c, port, "SET", "a", 1)
-	n, err := redis.Int(s.doCommand(c, port, "GET", "a"), nil)
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, 1)
-
-	ch := s.addBeforeHandler(app)
-
-	ms := app.masters.GetMasters()
-	c.Assert(ms, DeepEquals, []string{fmt.Sprintf("127.0.0.1:%d", port)})
-
-	s.stopRedis(c, port)
-
-	select {
-	case <-ch:
-	case <-time.After(5 * time.Second):
-		c.Fatal("check is not ok after 5s, too slow")
-	}
-}
-
-func (s *failoverTestSuite) TestFailoverCheck(c *C) {
-	cfg := new(Config)
-	cfg.Addr = ":11000"
-
-	port := testPort[0]
-	masterAddr := fmt.Sprintf("127.0.0.1:%d", port)
-
-	cfg.Masters = []string{masterAddr}
-	cfg.CheckInterval = 500
-	cfg.MaxDownTime = 1
-
-	app, err := NewApp(cfg)
-	c.Assert(err, IsNil)
-
-	defer app.Close()
-
-	ch := s.addAfterHandler(app)
-
-	go func() {
-		app.Run()
-	}()
-
-	s.buildReplTopo(c)
-
-	s.stopRedis(c, port)
-
-	select {
-	case <-ch:
-	case <-time.After(5 * time.Second):
-		c.Fatal("failover is not ok after 5s, too slow")
-	}
-}
-
-func (s *failoverTestSuite) TestOneFaftFailoverCheck(c *C) {
-	s.testOneClusterFailoverCheck(c, "raft")
 }
 
 func (s *failoverTestSuite) checkLeader(c *C, apps []*App) *App {
@@ -216,17 +161,13 @@ func (s *failoverTestSuite) testOneClusterFailoverCheck(c *C, broker string) {
 	ms := app.masters.GetMasters()
 	c.Assert(ms, DeepEquals, []string{fmt.Sprintf("127.0.0.1:%d", port)})
 
-	s.stopRedis(c, port)
+	s.stopRedis(c, port, testPassword)
 
 	select {
 	case <-ch:
 	case <-time.After(5 * time.Second):
 		c.Fatal("check is not ok after 5s, too slow")
 	}
-}
-
-func (s *failoverTestSuite) TestMultiRaftFailoverCheck(c *C) {
-	s.testMultiClusterFailoverCheck(c, "raft")
 }
 
 func (s *failoverTestSuite) testMultiClusterFailoverCheck(c *C, broker string) {
@@ -251,7 +192,7 @@ func (s *failoverTestSuite) testMultiClusterFailoverCheck(c *C, broker string) {
 	ms := app.masters.GetMasters()
 	c.Assert(ms, DeepEquals, []string{fmt.Sprintf("127.0.0.1:%d", port)})
 
-	s.stopRedis(c, port)
+	s.stopRedis(c, port, testPassword)
 
 	select {
 	case <-ch:
@@ -269,7 +210,7 @@ func (s *failoverTestSuite) testMultiClusterFailoverCheck(c *C, broker string) {
 	app.Close()
 
 	// start redis
-	s.startRedis(c, port)
+	s.startRedis(c, port, testPassword)
 
 	// wait other two elect new leader
 	app = s.checkLeader(c, apps)
@@ -282,21 +223,13 @@ func (s *failoverTestSuite) testMultiClusterFailoverCheck(c *C, broker string) {
 	ms = app.masters.GetMasters()
 	c.Assert(ms, DeepEquals, []string{fmt.Sprintf("127.0.0.1:%d", port)})
 
-	s.stopRedis(c, port)
+	s.stopRedis(c, port, testPassword)
 
 	select {
 	case <-ch:
 	case <-time.After(5 * time.Second):
 		c.Fatal("check is not ok after 5s, too slow")
 	}
-}
-
-func (s *failoverTestSuite) TestOneZkFailoverCheck(c *C) {
-	s.testOneClusterFailoverCheck(c, "zk")
-}
-
-func (s *failoverTestSuite) TestMultiZkFailoverCheck(c *C) {
-	s.testMultiClusterFailoverCheck(c, "zk")
 }
 
 func (s *failoverTestSuite) addBeforeHandler(app *App) chan string {
@@ -368,8 +301,13 @@ func (s *failoverTestSuite) newClusterApp(c *C, num int, base int, broker string
 	return apps
 }
 
-func (s *failoverTestSuite) buildReplTopo(c *C) {
+func (s *failoverTestSuite) buildReplTopo(c *C, password string) {
 	port := testPort[0]
+
+	if len(password) > 0 {
+		s.doCommand(c, testPort[1], "CONFIG", "SET", "MASTERAUTH", password)
+		s.doCommand(c, testPort[2], "CONFIG", "SET", "MASTERAUTH", password)
+	}
 
 	s.doCommand(c, testPort[1], "SLAVEOF", "127.0.0.1", port)
 	s.doCommand(c, testPort[2], "SLAVEOF", "127.0.0.1", port)
@@ -409,7 +347,7 @@ func (s *failoverTestSuite) waitReplConnected(c *C, port int, timeout int) {
 }
 
 func (s *failoverTestSuite) waitSync(c *C, port int, timeout int) {
-	g := newGroup(fmt.Sprintf("127.0.0.1:%d", port))
+	g := newGroup(fmt.Sprintf("127.0.0.1:%d", port), testPassword)
 
 	for i := 0; i < timeout*2; i++ {
 		err := g.doRole()
@@ -433,4 +371,92 @@ func (s *failoverTestSuite) waitSync(c *C, port int, timeout int) {
 	}
 
 	c.Fatalf("wait %ds, but all slaves can not sync the same with master %v", timeout, g)
+}
+
+func (s *failoverTestSuite) TestSimpleCheck(c *C) {
+	cfg := new(Config)
+	cfg.Addr = ":11000"
+
+	port := testPort[0]
+	cfg.Masters = []string{fmt.Sprintf("127.0.0.1:%d", port)}
+	cfg.CheckInterval = 500
+	cfg.MaxDownTime = 1
+	cfg.Password = testPassword
+
+	app, err := NewApp(cfg)
+	c.Assert(err, IsNil)
+
+	defer app.Close()
+
+	go func() {
+		app.Run()
+	}()
+
+	s.doCommand(c, port, "SET", "a", 1)
+	n, err := redis.Int(s.doCommand(c, port, "GET", "a"), nil)
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, 1)
+
+	ch := s.addBeforeHandler(app)
+
+	ms := app.masters.GetMasters()
+	c.Assert(ms, DeepEquals, []string{fmt.Sprintf("127.0.0.1:%d", port)})
+
+	s.stopRedis(c, port, testPassword)
+
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		c.Fatal("check is not ok after 5s, too slow")
+	}
+}
+
+func (s *failoverTestSuite) TestFailoverCheck(c *C) {
+	cfg := new(Config)
+	cfg.Addr = ":11000"
+
+	port := testPort[0]
+	masterAddr := fmt.Sprintf("127.0.0.1:%d", port)
+
+	cfg.Masters = []string{masterAddr}
+	cfg.CheckInterval = 500
+	cfg.MaxDownTime = 1
+	cfg.Password = testPassword
+
+	app, err := NewApp(cfg)
+	c.Assert(err, IsNil)
+
+	defer app.Close()
+
+	ch := s.addAfterHandler(app)
+
+	go func() {
+		app.Run()
+	}()
+
+	s.buildReplTopo(c, testPassword)
+
+	s.stopRedis(c, port, testPassword)
+
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		c.Fatal("failover is not ok after 5s, too slow")
+	}
+}
+
+func (s *failoverTestSuite) TestOneFaftFailoverCheck(c *C) {
+	s.testOneClusterFailoverCheck(c, "raft")
+}
+
+func (s *failoverTestSuite) TestMultiRaftFailoverCheck(c *C) {
+	s.testMultiClusterFailoverCheck(c, "raft")
+}
+
+func (s *failoverTestSuite) TestOneZkFailoverCheck(c *C) {
+	s.testOneClusterFailoverCheck(c, "zk")
+}
+
+func (s *failoverTestSuite) TestMultiZkFailoverCheck(c *C) {
+	s.testMultiClusterFailoverCheck(c, "zk")
 }

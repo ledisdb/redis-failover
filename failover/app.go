@@ -2,12 +2,13 @@ package failover
 
 import (
 	"errors"
-	"github.com/gorilla/mux"
-	"github.com/siddontang/go/log"
 	"net"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/gorilla/mux"
+	"github.com/siddontang/go/log"
 )
 
 var (
@@ -148,7 +149,7 @@ func (a *App) check() {
 		a.gMutex.Lock()
 		g, ok := a.groups[master]
 		if !ok {
-			g = newGroup(master)
+			g = newGroup(master, a.c.Password)
 			a.groups[master] = g
 		}
 		a.gMutex.Unlock()
@@ -206,7 +207,8 @@ func (a *App) checkMaster(wg *sync.WaitGroup, g *Group) {
 	log.Errorf("check master %s err %v, do failover", oldMaster, err)
 
 	if err := a.onBeforeFailover(oldMaster); err != nil {
-		//give up failover
+		// give up failover
+		log.Errorf("onBeforeFailover err %v", err)
 		return
 	}
 
@@ -214,6 +216,7 @@ func (a *App) checkMaster(wg *sync.WaitGroup, g *Group) {
 	newMaster, err := g.Elect()
 	if err != nil {
 		// elect error
+		log.Errorf("elect err %v", err)
 		return
 	}
 

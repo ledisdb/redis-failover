@@ -1,8 +1,9 @@
 package failover
 
 import (
-	"github.com/BurntSushi/toml"
 	"io/ioutil"
+
+	"github.com/BurntSushi/toml"
 )
 
 const (
@@ -30,6 +31,7 @@ type ZkConfig struct {
 
 type Config struct {
 	Addr          string   `toml:"addr"`
+	Password      string   `toml:"password"`
 	Masters       []string `toml:"masters"`
 	MastersState  string   `toml:"masters_state"`
 	CheckInterval int      `toml:"check_interval"`

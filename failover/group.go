@@ -3,14 +3,15 @@ package failover
 import (
 	"errors"
 	"fmt"
-	"github.com/garyburd/redigo/redis"
-	"github.com/siddontang/go/log"
-	"github.com/siddontang/go/sync2"
 	"net"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/garyburd/redigo/redis"
+	"github.com/siddontang/go/log"
+	"github.com/siddontang/go/sync2"
 )
 
 var (
@@ -32,10 +33,17 @@ const (
 	SyncState       = "sync"
 )
 
+const (
+	MaxDoCommandNum = 3
+)
+
 // A node represents a real redis server
 type Node struct {
-	// Redis address, only support tcp now
+	// Server address, only support tcp now
 	Addr string
+
+	// Server password
+	Password string
 
 	// Replication offset
 	Offset int64
@@ -47,17 +55,32 @@ func (n *Node) String() string {
 	return fmt.Sprintf("{addr: %s offset: %d}", n.Addr, n.Offset)
 }
 
+func (n *Node) newRedisConn(addr string, connectTimeout, readTimeout, writeTimeout time.Duration, password string) (redis.Conn, error) {
+	c, err := redis.DialTimeout("tcp", addr, 5*time.Second, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(password) > 0 {
+		if _, err = c.Do("AUTH", password); err != nil {
+			c.Close()
+			return nil, err
+		}
+	}
+
+	return c, nil
+}
+
 func (n *Node) doCommand(cmd string, args ...interface{}) (interface{}, error) {
 	var err error
 	var v interface{}
-	for i := 0; i < 3; i++ {
+	for i := 0; i < MaxDoCommandNum; i++ {
 		if n.conn == nil {
-			n.conn, err = redis.DialTimeout("tcp", n.Addr, 5*time.Second, 0, 0)
+			n.conn, err = n.newRedisConn(n.Addr, 5*time.Second, 0, 0, n.Password)
 			if err != nil {
 				log.Errorf("dial %s error: %v, try again", n.Addr, err)
 				continue
 			}
-
 		}
 
 		v, err = n.conn.Do(cmd, args...)
@@ -85,7 +108,19 @@ func (n *Node) ping() error {
 }
 
 func (n *Node) slaveof(host string, port string) error {
+	if len(n.Password) > 0 {
+		_, err := n.doCommand("CONFIG", "SET", "MASTERAUTH", n.Password)
+		if err != nil {
+			return err
+		}
+	}
+
 	_, err := n.doCommand("SLAVEOF", host, port)
+	return err
+}
+
+func (n *Node) slaveofnoone() error {
+	_, err := n.doCommand("SLAVEOF", "NO", "ONE")
 	return err
 }
 
@@ -123,15 +158,17 @@ type Group struct {
 	Master *Node
 	Slaves map[string]*Node
 
+	Password string
+
 	CheckErrNum sync2.AtomicInt32
 
 	m sync.Mutex
 }
 
-func newGroup(masterAddr string) *Group {
+func newGroup(masterAddr string, password string) *Group {
 	g := new(Group)
-
-	g.Master = &Node{Addr: masterAddr}
+	g.Password = password
+	g.Master = &Node{Addr: masterAddr, Password: g.Password}
 	g.Slaves = make(map[string]*Node)
 
 	return g
@@ -183,7 +220,9 @@ func (g *Group) doRole() error {
 	nodes := make(map[string]*Node, len(slaves))
 	for i := 0; i < len(slaves); i++ {
 		ss, _ := redis.Strings(slaves[i], nil)
+
 		var n Node
+		n.Password = g.Password
 		n.Addr = fmt.Sprintf("%s:%s", ss[0], ss[1])
 		n.Offset, _ = strconv.ParseInt(fmt.Sprintf("%s", ss[2]), 10, 64)
 		nodes[n.Addr] = &n
@@ -278,7 +317,7 @@ func (g *Group) Promote(addr string) error {
 
 	node := g.Slaves[addr]
 
-	if err := node.slaveof("no", "one"); err != nil {
+	if err := node.slaveofnoone(); err != nil {
 		return err
 	}
 
