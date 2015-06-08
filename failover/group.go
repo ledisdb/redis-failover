@@ -56,7 +56,7 @@ func (n *Node) String() string {
 }
 
 func (n *Node) newRedisConn(addr string, connectTimeout, readTimeout, writeTimeout time.Duration, password string) (redis.Conn, error) {
-	c, err := redis.DialTimeout("tcp", addr, 5*time.Second, 0, 0)
+	c, err := redis.DialTimeout("tcp", addr, connectTimeout, readTimeout, writeTimeout)
 	if err != nil {
 		return nil, err
 	}
