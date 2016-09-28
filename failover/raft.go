@@ -2,12 +2,10 @@ package failover
 
 import (
 	"encoding/json"
-	"fmt"
 	"github.com/hashicorp/raft"
 	"github.com/hashicorp/raft-boltdb"
 	"github.com/siddontang/go/log"
 	"io"
-	"net"
 	"os"
 	"path"
 	"time"
@@ -92,24 +90,14 @@ func newRaft(c *Config, fsm raft.FSM) (Cluster, error) {
 		return nil, nil
 	}
 
-	peers := make([]net.Addr, 0, len(c.Raft.Cluster))
+	peers := make([]string, 0, len(c.Raft.Cluster))
 
 	r.raftAddr = c.Raft.Addr
 
-	a, err := net.ResolveTCPAddr("tcp", r.raftAddr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid raft addr format %s, must host:port, err:%v", r.raftAddr, err)
-	}
-
-	peers = raft.AddUniquePeer(peers, a)
+	peers = raft.AddUniquePeer(peers, r.raftAddr)
 
 	for _, cluster := range c.Raft.Cluster {
-		a, err = net.ResolveTCPAddr("tcp", cluster)
-		if err != nil {
-			return nil, fmt.Errorf("invalid cluster format %s, must host:port, err:%v", cluster, err)
-		}
-
-		peers = raft.AddUniquePeer(peers, a)
+		peers = raft.AddUniquePeer(peers, cluster)
 	}
 
 	os.MkdirAll(c.Raft.DataDir, 0755)
@@ -131,6 +119,7 @@ func newRaft(c *Config, fsm raft.FSM) (Cluster, error) {
 	}
 
 	raftDBPath := path.Join(c.Raft.DataDir, "raft_db")
+	var err error
 	r.dbStore, err = raftboltdb.NewBoltStore(raftDBPath)
 	if err != nil {
 		return nil, err
@@ -224,39 +213,19 @@ func (r *Raft) SetMasters(addrs []string, timeout time.Duration) error {
 	return r.apply(&a, timeout)
 }
 
-func (r *Raft) AddPeer(addr string) error {
-	peer, err := net.ResolveTCPAddr("tcp", addr)
-	if err != nil {
-		return err
-	}
-
-	f := r.r.AddPeer(peer)
+func (r *Raft) AddPeer(peerAddr string) error {
+	f := r.r.AddPeer(peerAddr)
 	return f.Error()
 }
 
-func (r *Raft) DelPeer(addr string) error {
-	peer, err := net.ResolveTCPAddr("tcp", addr)
-	if err != nil {
-		return err
-	}
-
-	f := r.r.RemovePeer(peer)
+func (r *Raft) DelPeer(peerAddr string) error {
+	f := r.r.RemovePeer(peerAddr)
 	return f.Error()
 
 }
 
-func (r *Raft) SetPeers(addrs []string) error {
-	peers := make([]net.Addr, 0, len(addrs))
-
-	for _, addr := range addrs {
-		peer, err := net.ResolveTCPAddr("tcp", addr)
-		if err != nil {
-			return err
-		}
-		peers = append(peers, peer)
-	}
-
-	f := r.r.SetPeers(peers)
+func (r *Raft) SetPeers(peerAddrs []string) error {
+	f := r.r.SetPeers(peerAddrs)
 	return f.Error()
 
 }
@@ -269,9 +238,7 @@ func (r *Raft) GetPeers() ([]string, error) {
 
 	addrs := make([]string, 0, len(peers))
 
-	for _, peer := range peers {
-		addrs = append(addrs, peer.String())
-	}
+	addrs = append(addrs, peers...)
 
 	return addrs, nil
 }
@@ -292,15 +259,15 @@ func (r *Raft) LeaderCh() <-chan bool {
 
 func (r *Raft) IsLeader() bool {
 	addr := r.r.Leader()
-	if addr == nil {
+	if addr == "" {
 		return false
 	} else {
-		return addr.String() == r.raftAddr
+		return addr == r.raftAddr
 	}
 }
 
 func (r *Raft) Leader() string {
-	return r.r.Leader().String()
+	return r.r.Leader()
 }
 
 func (r *Raft) Barrier(timeout time.Duration) error {
