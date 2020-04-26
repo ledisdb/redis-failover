@@ -2,13 +2,14 @@ package failover
 
 import (
 	"encoding/json"
-	"github.com/hashicorp/raft"
-	"github.com/hashicorp/raft-boltdb"
-	"github.com/siddontang/go/log"
 	"io"
 	"os"
 	"path"
 	"time"
+
+	"github.com/hashicorp/raft"
+	raftboltdb "github.com/hashicorp/raft-boltdb"
+	"github.com/siddontang/go/log"
 )
 
 func (fsm *masterFSM) Apply(l *raft.Log) interface{} {
@@ -28,7 +29,7 @@ func (fsm *masterFSM) Snapshot() (raft.FSMSnapshot, error) {
 	snap.masters = make([]string, 0, len(fsm.masters))
 
 	fsm.Lock()
-	for master, _ := range fsm.masters {
+	for master := range fsm.masters {
 		snap.masters = append(snap.masters, master)
 	}
 	fsm.Unlock()

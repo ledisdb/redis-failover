@@ -3,14 +3,15 @@ package failover
 import (
 	"errors"
 	"fmt"
-	"github.com/garyburd/redigo/redis"
-	"github.com/siddontang/go/log"
-	"github.com/siddontang/go/sync2"
 	"net"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/garyburd/redigo/redis"
+	"github.com/siddontang/go/log"
+	"github.com/siddontang/go/sync2"
 )
 
 var (
@@ -190,7 +191,7 @@ func (g *Group) doRole() error {
 	}
 
 	// we don't care slave add or remove too much, so only log
-	for addr, _ := range nodes {
+	for addr := range nodes {
 		if _, ok := g.Slaves[addr]; !ok {
 			log.Infof("slave %s added", addr)
 		}
