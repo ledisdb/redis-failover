@@ -2,3 +2,4 @@
 var*
 .vscode
 redis-failover
+coverage.out
