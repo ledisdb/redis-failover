@@ -1,15 +1,15 @@
 
 export GO111MODULE=on
 
-PACKAGES ?= $(shell go list -mod=vendor ./... | grep -v /vendor/)
+PACKAGES ?= $(shell GO111MODULE=on go list -mod=vendor ./... | grep -v /vendor/)
 
 all: build
 
 build:
-	go build -mod=vendor $(PACKAGES)
+	GO111MODULE=on go build -mod=vendor $(PACKAGES)
 
 clean:
-	go clean -i ./...
+	GO111MODULE=on go clean -i ./...
 	@rm -rf bin
 	@rm -f *.rdb *.out *.log *.dump 
 	@if [ -d test ]; then cd test && rm -f *.out *.log *.rdb; fi
