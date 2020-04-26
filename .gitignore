@@ -1,2 +1,4 @@
 *.rdb
 var*
+.vscode
+redis-failover

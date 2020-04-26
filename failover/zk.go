@@ -298,8 +298,6 @@ func (t *electorTask) Run() error {
 			}
 		}
 	}
-
-	return nil
 }
 
 func (t *electorTask) Stop() {
