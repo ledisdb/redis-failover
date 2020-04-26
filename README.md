@@ -1,5 +1,7 @@
 # redis-failover
 
+[![Build Status](https://travis-ci.org/ledisdb/redis-failover.svg?branch=develop)](https://travis-ci.org/ledisdb/redis-failover) [![codecov](https://codecov.io/gh/ledisdb/redis-failover/branch/master/graph/badge.svg)](https://codecov.io/gh/ledisdb/redis-failover)
+
 Automatic redis monitoring and failover. 
 
 ## Why not redis-sentinel?
