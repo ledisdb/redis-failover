@@ -1,6 +1,9 @@
-all: build
 
-PACKAGES ?= $(shell GO111MODULE=on go list -mod=vendor ./... | grep -v /vendor/)
+export GO111MODULE=on
+
+PACKAGES ?= $(shell go list -mod=vendor ./... | grep -v /vendor/)
+
+all: build
 
 build:
 	go build -mod=vendor
