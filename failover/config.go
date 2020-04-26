@@ -1,8 +1,9 @@
 package failover
 
 import (
-	"github.com/BurntSushi/toml"
 	"io/ioutil"
+
+	"github.com/BurntSushi/toml"
 )
 
 const (

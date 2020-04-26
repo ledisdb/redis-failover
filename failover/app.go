@@ -2,12 +2,13 @@ package failover
 
 import (
 	"errors"
-	"github.com/gorilla/mux"
-	"github.com/siddontang/go/log"
 	"net"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/gorilla/mux"
+	"github.com/siddontang/go/log"
 )
 
 var (

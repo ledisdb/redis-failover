@@ -6,7 +6,7 @@ PACKAGES ?= $(shell go list -mod=vendor ./... | grep -v /vendor/)
 all: build
 
 build:
-	go build -mod=vendor
+	go build -mod=vendor $(PACKAGES)
 
 clean:
 	go clean -i ./...

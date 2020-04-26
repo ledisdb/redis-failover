@@ -76,7 +76,7 @@ func (fsm *masterFSM) GetMasters() []string {
 	defer fsm.Unlock()
 
 	m := make([]string, 0, len(fsm.masters))
-	for master, _ := range fsm.masters {
+	for master := range fsm.masters {
 		m = append(m, master)
 	}
 
@@ -98,7 +98,7 @@ func (fsm *masterFSM) Copy() *masterFSM {
 	o := new(masterFSM)
 	o.masters = make(map[string]struct{}, len(fsm.masters))
 
-	for master, _ := range fsm.masters {
+	for master := range fsm.masters {
 		o.masters[master] = struct{}{}
 	}
 
